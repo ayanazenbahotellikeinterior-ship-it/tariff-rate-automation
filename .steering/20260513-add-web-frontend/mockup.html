@@ -713,7 +713,13 @@
     }
 
     function downloadExcel() {
-      showToast("⬇ tariff_20260513_1430.xlsx をダウンロードしました（モック）");
+      const a = document.createElement('a');
+      a.href = 'tariff_sample.xlsx';
+      a.download = 'tariff_20260513_1430.xlsx';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      showToast("⬇ tariff_20260513_1430.xlsx をダウンロードしました");
     }
 
     function resetAll() {
