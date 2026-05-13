@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>設計書 — Webフロントエンド追加</title>
+  <link rel="stylesheet" href="../../docs/assets/design-system.css">
+</head>
+<body>
+
+  <header class="doc-header">
+    <a class="back-link" href="../../docs/index.html">← ドキュメントトップへ戻る</a>
+    <nav aria-label="パンくず" class="breadcrumb">
+      <ol>
+        <li><a href="../../docs/index.html">docs</a></li>
+        <li><a href="../">.steering</a></li>
+        <li>20260513-add-web-frontend</li>
+        <li aria-current="page">design.html</li>
+      </ol>
+    </nav>
+    <h1>設計書 — Webフロントエンド追加</h1>
+    <p class="doc-meta">ドキュメントID: DSN-20260513-002 / 最終更新: 2026-05-13 / バージョン: 0.1（ドラフト）/ 関連: <a href="requirements.html">requirements</a> / <a href="mockup.html">mockup</a> / <a href="../20260513-tariff-rate-automation/design.html">CLI 設計</a></p>
+  </header>
+
+  <details class="toc" open>
+    <summary>目次</summary>
+    <nav aria-label="目次">
+      <ol>
+        <li><a href="#section-1">1. 設計方針</a></li>
+        <li><a href="#section-2">2. システムアーキテクチャ</a></li>
+        <li><a href="#section-3">3. 認証フロー（Google OAuth）</a></li>
+        <li><a href="#section-4">4. ジョブモデルと状態遷移</a></li>
+        <li><a href="#section-5">5. API エンドポイント仕様</a></li>
+        <li><a href="#section-6">6. データモデル</a></li>
+        <li><a href="#section-7">7. ファイルストレージ設計</a></li>
+        <li><a href="#section-8">8. フロントエンド設計</a></li>
+        <li><a href="#section-9">9. 既存 CLI モジュールの統合</a></li>
+        <li><a href="#section-10">10. 設定・シークレット管理</a></li>
+        <li><a href="#section-11">11. エラーハンドリング</a></li>
+        <li><a href="#section-12">12. デプロイ設計（Docker）</a></li>
+        <li><a href="#section-13">13. プロジェクト構成</a></li>
+        <li><a href="#section-14">14. UI影響セクション</a></li>
+        <li><a href="#section-15">15. テスト方針</a></li>
+        <li><a href="#section-16">16. 既知の未決事項</a></li>
+      </ol>
+    </nav>
+  </details>
+
+  <main>
+
+    <section id="section-1">
+      <h2>1. 設計方針</h2>
+      <ul>
+        <li><strong>既存 CLI モジュールは変更しない</strong>。Web 層は CLI の薄いラッパーとして実装。</li>
+        <li><strong>非同期ジョブ</strong>: アップロード後すぐにレスポンス、処理は別タスクで実行。フロントはポーリングで状態取得。</li>
+        <li><strong>状態は最小限</strong>: 初期リリースはインメモリ + ファイルシステム保存（DB なし）。スケール要件が出たら DB 導入を検討。</li>
+        <li><strong>ホスティング非依存</strong>: 設定はすべて環境変数 + YAML、Docker で完結。</li>
+        <li><strong>セキュリティ第一</strong>: HTTPS必須、ファイルはユーザー間隔離、シークレットは環境変数のみ。</li>
+        <li><strong>フロントは「シンプル」</strong>: 初期はテンプレートエンジン（Jinja2）+ vanilla JS。SPA フレームワークは導入しない。</li>
+      </ul>
+    </section>
+
+    <section id="section-2">
+      <h2>2. システムアーキテクチャ</h2>
+      <figure>
+        <svg viewBox="0 0 820 460" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="システムアーキテクチャ図">
+          <title>システムアーキテクチャ</title>
+          <defs>
+            <marker id="arrA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+              <path d="M0,0 L10,5 L0,10 z" fill="#4338ca"/>
+            </marker>
+          </defs>
+
+          <!-- ブラウザ -->
+          <g font-family="sans-serif" font-size="12" fill="#0f172a">
+            <rect x="20" y="40" width="160" height="100" rx="8" fill="#eef2ff" stroke="#4338ca"/>
+            <text x="100" y="65" text-anchor="middle" font-weight="bold">ブラウザ</text>
+            <text x="100" y="85" text-anchor="middle" fill="#475569">HTML/CSS/JS</text>
+            <text x="100" y="100" text-anchor="middle" fill="#475569">Jinja2 テンプレート</text>
+            <text x="100" y="115" text-anchor="middle" fill="#475569">ポーリングで状態取得</text>
+          </g>
+
+          <!-- Google OAuth -->
+          <g font-family="sans-serif" font-size="12" fill="#0f172a">
+            <rect x="20" y="180" width="160" height="60" rx="8" fill="#dcfce7" stroke="#15803d"/>
+            <text x="100" y="205" text-anchor="middle" font-weight="bold">Google OAuth</text>
+            <text x="100" y="223" text-anchor="middle" fill="#475569">認証プロバイダ</text>
+          </g>
+
+          <!-- FastAPI -->
+          <g font-family="sans-serif" font-size="11" fill="#0f172a">
+            <rect x="240" y="40" width="300" height="280" rx="8" fill="#fef9c3" stroke="#a16207"/>
+            <text x="390" y="60" text-anchor="middle" font-weight="bold" font-size="13">FastAPI アプリ</text>
+
+            <rect x="260" y="80" width="120" height="50" rx="6" fill="#fff" stroke="#a16207"/>
+            <text x="320" y="100" text-anchor="middle">routes/</text>
+            <text x="320" y="115" text-anchor="middle" fill="#475569" font-size="10">auth, upload, jobs</text>
+
+            <rect x="400" y="80" width="120" height="50" rx="6" fill="#fff" stroke="#a16207"/>
+            <text x="460" y="100" text-anchor="middle">middlewares/</text>
+            <text x="460" y="115" text-anchor="middle" fill="#475569" font-size="10">auth, error</text>
+
+            <rect x="260" y="150" width="120" height="50" rx="6" fill="#fff" stroke="#a16207"/>
+            <text x="320" y="170" text-anchor="middle">job_runner</text>
+            <text x="320" y="185" text-anchor="middle" fill="#475569" font-size="10">非同期実行</text>
+
+            <rect x="400" y="150" width="120" height="50" rx="6" fill="#fff" stroke="#a16207"/>
+            <text x="460" y="170" text-anchor="middle">job_store</text>
+            <text x="460" y="185" text-anchor="middle" fill="#475569" font-size="10">状態管理</text>
+
+            <rect x="260" y="220" width="120" height="50" rx="6" fill="#fff" stroke="#a16207"/>
+            <text x="320" y="240" text-anchor="middle">file_store</text>
+            <text x="320" y="255" text-anchor="middle" fill="#475569" font-size="10">アップロード/結果</text>
+
+            <rect x="400" y="220" width="120" height="50" rx="6" fill="#fff" stroke="#a16207"/>
+            <text x="460" y="240" text-anchor="middle">templates/</text>
+            <text x="460" y="255" text-anchor="middle" fill="#475569" font-size="10">Jinja2</text>
+
+            <rect x="320" y="285" width="140" height="25" rx="4" fill="#fde047" stroke="#a16207"/>
+            <text x="390" y="302" text-anchor="middle" font-size="10">main.py (ASGI エントリ)</text>
+          </g>
+
+          <!-- 既存 CLI -->
+          <g font-family="sans-serif" font-size="12" fill="#0f172a">
+            <rect x="600" y="40" width="190" height="130" rx="8" fill="#fde2e2" stroke="#b91c1c"/>
+            <text x="695" y="65" text-anchor="middle" font-weight="bold">既存 CLI モジュール</text>
+            <text x="695" y="85" text-anchor="middle" fill="#475569">readers (permit/pl/po/sheet)</text>
+            <text x="695" y="100" text-anchor="middle" fill="#475569">normalize_hs / _tariff</text>
+            <text x="695" y="115" text-anchor="middle" fill="#475569">vocabulary / matcher</text>
+            <text x="695" y="130" text-anchor="middle" fill="#475569">excel_writer</text>
+            <text x="695" y="150" text-anchor="middle" fill="#b91c1c" font-style="italic">変更しない</text>
+          </g>
+
+          <!-- Sheets API -->
+          <g font-family="sans-serif" font-size="12" fill="#0f172a">
+            <rect x="600" y="200" width="190" height="60" rx="8" fill="#e0e7ff" stroke="#4338ca"/>
+            <text x="695" y="225" text-anchor="middle" font-weight="bold">Google Sheets API</text>
+            <text x="695" y="243" text-anchor="middle" fill="#475569">粗利表（閲覧）</text>
+          </g>
+
+          <!-- ファイルシステム -->
+          <g font-family="sans-serif" font-size="12" fill="#0f172a">
+            <rect x="600" y="290" width="190" height="80" rx="8" fill="#f5f3ff" stroke="#7c3aed"/>
+            <text x="695" y="315" text-anchor="middle" font-weight="bold">ファイルシステム</text>
+            <text x="695" y="333" text-anchor="middle" fill="#475569">/uploads/{job_id}/</text>
+            <text x="695" y="348" text-anchor="middle" fill="#475569">/outputs/{job_id}/</text>
+            <text x="695" y="363" text-anchor="middle" fill="#475569">30日で自動削除</text>
+          </g>
+
+          <!-- 矢印 -->
+          <g stroke="#4338ca" stroke-width="1.5" fill="none">
+            <line x1="180" y1="90"  x2="240" y2="90"  marker-end="url(#arrA)"/>
+            <line x1="100" y1="140" x2="100" y2="180" marker-end="url(#arrA)"/>
+            <line x1="180" y1="210" x2="240" y2="105" marker-end="url(#arrA)"/>
+
+            <line x1="540" y1="175" x2="600" y2="105" marker-end="url(#arrA)"/>
+            <line x1="540" y1="175" x2="600" y2="230" marker-end="url(#arrA)"/>
+            <line x1="540" y1="245" x2="600" y2="320" marker-end="url(#arrA)"/>
+          </g>
+
+          <!-- 凡例 -->
+          <g font-family="sans-serif" font-size="11" fill="#475569">
+            <text x="20" y="430">凡例:</text>
+            <rect x="60" y="420" width="20" height="12" fill="#fef9c3" stroke="#a16207"/>
+            <text x="85" y="430">新規実装</text>
+            <rect x="160" y="420" width="20" height="12" fill="#fde2e2" stroke="#b91c1c"/>
+            <text x="185" y="430">既存（変更なし）</text>
+            <rect x="290" y="420" width="20" height="12" fill="#e0e7ff" stroke="#4338ca"/>
+            <text x="315" y="430">外部サービス</text>
+          </g>
+        </svg>
+        <figcaption>図 1. システムアーキテクチャ全体図</figcaption>
+      </figure>
+    </section>
+
+    <section id="section-3">
+      <h2>3. 認証フロー（Google OAuth）</h2>
+
+      <h3>3.1 採用方式</h3>
+      <ul>
+        <li><strong>OAuth 2.0 Authorization Code Flow</strong>（サーバ側でコードを受け取り、サーバ側でトークン取得）</li>
+        <li>ライブラリ: <strong>Authlib</strong>（FastAPI 統合がシンプル）</li>
+        <li>スコープ: <code>openid email profile</code>（Sheets API は別途サービスアカウント認証で読む）</li>
+      </ul>
+
+      <h3>3.2 フロー</h3>
+      <ol>
+        <li>ユーザーが <code>/login</code> にアクセス → Google 認証画面へリダイレクト</li>
+        <li>認可後、Google が <code>/auth/callback?code=...</code> へリダイレクト</li>
+        <li>サーバが code をトークンに交換し、ユーザー情報（email）を取得</li>
+        <li><strong>ドメイン許可リスト</strong> と email を照合。不一致なら 403 を返す</li>
+        <li>JWT トークン or 暗号化セッション Cookie を発行（HttpOnly, Secure, SameSite=Lax）</li>
+        <li>以降のリクエストは Cookie で認証</li>
+      </ol>
+
+      <h3>3.3 ドメイン制限</h3>
+      <pre><code># config.yaml
+auth:
+  allowed_domains:
+    - "hotellikeinterior.com"
+  allowed_emails:               # 個別許可（オプション）
+    - "external-partner@example.com"
+  session_ttl_seconds: 28800    # 8時間
+</code></pre>
+
+      <h3>3.4 サインアウト</h3>
+      <ul>
+        <li><code>/logout</code>: Cookie 削除 + Google の revoke エンドポイントを呼ぶ。</li>
+      </ul>
+    </section>
+
+    <section id="section-4">
+      <h2>4. ジョブモデルと状態遷移</h2>
+
+      <h3>4.1 ジョブの状態</h3>
+      <figure>
+        <svg viewBox="0 0 700 200" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="ジョブ状態遷移図">
+          <title>ジョブ状態遷移</title>
+          <defs>
+            <marker id="arrJ" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+              <path d="M0,0 L10,5 L0,10 z" fill="#4338ca"/>
+            </marker>
+          </defs>
+          <g font-family="sans-serif" font-size="13" fill="#0f172a">
+            <ellipse cx="80"  cy="100" rx="60" ry="30" fill="#f1f5f9" stroke="#475569"/>
+            <text x="80"  y="105" text-anchor="middle">pending</text>
+            <ellipse cx="260" cy="100" rx="60" ry="30" fill="#fef3c7" stroke="#b45309"/>
+            <text x="260" y="105" text-anchor="middle">running</text>
+            <ellipse cx="440" cy="60"  rx="60" ry="30" fill="#dcfce7" stroke="#15803d"/>
+            <text x="440" y="65"  text-anchor="middle">completed</text>
+            <ellipse cx="440" cy="140" rx="60" ry="30" fill="#fee2e2" stroke="#b91c1c"/>
+            <text x="440" y="145" text-anchor="middle">failed</text>
+            <ellipse cx="620" cy="100" rx="60" ry="30" fill="#e5e7eb" stroke="#475569"/>
+            <text x="620" y="105" text-anchor="middle">expired</text>
+          </g>
+          <g stroke="#4338ca" stroke-width="1.5" fill="none">
+            <line x1="140" y1="100" x2="200" y2="100" marker-end="url(#arrJ)"/>
+            <line x1="320" y1="90"  x2="380" y2="70"  marker-end="url(#arrJ)"/>
+            <line x1="320" y1="110" x2="380" y2="135" marker-end="url(#arrJ)"/>
+            <line x1="500" y1="65"  x2="560" y2="95"  marker-end="url(#arrJ)"/>
+            <line x1="500" y1="140" x2="560" y2="110" marker-end="url(#arrJ)"/>
+          </g>
+          <g font-family="sans-serif" font-size="11" fill="#475569">
+            <text x="155" y="93">受付</text>
+            <text x="340" y="60">成功</text>
+            <text x="340" y="160">失敗</text>
+            <text x="520" y="80">30日経過</text>
+          </g>
+        </svg>
+        <figcaption>図 2. ジョブ状態遷移</figcaption>
+      </figure>
+
+      <h3>4.2 ジョブのライフサイクル</h3>
+      <ol>
+        <li><code>POST /api/upload</code> でジョブ生成 → 状態: <code>pending</code></li>
+        <li>バックグラウンドタスクが受け取り → <code>running</code></li>
+        <li>処理完了 → <code>completed</code>（結果ファイル保存）</li>
+        <li>例外発生 → <code>failed</code>（エラー詳細を記録）</li>
+        <li>30日経過 → <code>expired</code>（結果ファイル削除）</li>
+      </ol>
+
+      <h3>4.3 非同期実行の実装</h3>
+      <ul>
+        <li>FastAPI の <code>BackgroundTasks</code> または <code>asyncio.create_task</code> で実行（初期リリース）。</li>
+        <li>同時実行数の制御: <code>asyncio.Semaphore(5)</code> で最大5並列に制限。</li>
+        <li>将来規模が大きくなれば Celery + Redis に置き換え可能な抽象化を保つ。</li>
+      </ul>
+    </section>
+
+    <section id="section-5">
+      <h2>5. API エンドポイント仕様</h2>
+
+      <h3>5.1 一覧</h3>
+      <table>
+        <thead>
+          <tr><th>メソッド</th><th>パス</th><th>用途</th><th>認証</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>GET</td><td><code>/login</code></td><td>ログイン画面 → Google認可へ</td><td>不要</td></tr>
+          <tr><td>GET</td><td><code>/auth/callback</code></td><td>OAuth コールバック</td><td>不要</td></tr>
+          <tr><td>POST</td><td><code>/logout</code></td><td>ログアウト</td><td>必要</td></tr>
+          <tr><td>GET</td><td><code>/</code></td><td>アップロード画面（HTML）</td><td>必要</td></tr>
+          <tr><td>POST</td><td><code>/api/upload</code></td><td>3ファイル投入 + ジョブ生成</td><td>必要</td></tr>
+          <tr><td>GET</td><td><code>/api/jobs/{job_id}/status</code></td><td>ジョブ状態取得</td><td>必要</td></tr>
+          <tr><td>GET</td><td><code>/api/jobs/{job_id}/result</code></td><td>結果 JSON（画面表示用）</td><td>必要</td></tr>
+          <tr><td>GET</td><td><code>/api/jobs/{job_id}/download</code></td><td>中間Excelダウンロード</td><td>必要</td></tr>
+          <tr><td>GET</td><td><code>/api/jobs</code></td><td>履歴一覧（自分のジョブ）</td><td>必要</td></tr>
+          <tr><td>GET</td><td><code>/healthz</code></td><td>ヘルスチェック</td><td>不要</td></tr>
+        </tbody>
+      </table>
+
+      <h3>5.2 POST /api/upload</h3>
+      <p><strong>リクエスト</strong>: <code>multipart/form-data</code></p>
+      <pre><code>permit: (PDF)         必須
+po:     (PDF or xlsx) 必須
+pl:     (xlsx)        必須
+spreadsheet_id: str   任意（指定なければ設定の既定）
+</code></pre>
+      <p><strong>レスポンス</strong>: <code>202 Accepted</code></p>
+      <pre><code>{
+  "job_id": "j_2026051314300001",
+  "status": "pending",
+  "created_at": "2026-05-13T14:30:00Z",
+  "status_url": "/api/jobs/j_2026051314300001/status"
+}
+</code></pre>
+
+      <h3>5.3 GET /api/jobs/{job_id}/status</h3>
+      <pre><code>{
+  "job_id": "j_2026051314300001",
+  "status": "running",
+  "progress": {
+    "step": "matching",          // permit_parse / pl_parse / po_parse / sheet_fetch / matching / writing
+    "label": "三ホップ突合を実行中",
+    "percent": 70
+  },
+  "created_at": "...",
+  "updated_at": "..."
+}
+</code></pre>
+
+      <h3>5.4 GET /api/jobs/{job_id}/result</h3>
+      <pre><code>{
+  "job_id": "...",
+  "status": "completed",
+  "summary": {
+    "total": 3,
+    "matched": 3,
+    "unmatched": 0,
+    "match_rate": 1.0,
+    "elapsed_seconds": 42.3
+  },
+  "rows": [
+    {
+      "no": 1, "hinban": "ctstpjlblue", "item": "Cotton twill stripe pajama (Set up)",
+      "gender": "WOMEN", "material": "100% cotton",
+      "tariff_rate": "7.4%", "status": "success", "reason": null,
+      "trace": {
+        "pl_descriptions": ["WOMEN'S COTTON TWILL STRIPE PAJAMA TOPS", "WOMEN'S COTTON TWILL STRIPE PAJAMA PANTS"],
+        "pl_hs": "6208210000",
+        "hs_key": "620821",
+        "permit_column": 7,
+        "permit_name": "WOMEN'S PYJAMAS,NIGHTDRESS OF COTTON",
+        "permit_code": "6208.21-000"
+      }
+    }
+  ],
+  "download_url": "/api/jobs/.../download"
+}
+</code></pre>
+
+      <h3>5.5 認証エラー / 認可エラー</h3>
+      <ul>
+        <li>未ログインで保護APIにアクセス: <code>401 Unauthorized</code></li>
+        <li>他人のジョブにアクセス: <code>403 Forbidden</code></li>
+        <li>ドメイン外でログイン試行: <code>403</code> + 説明ページ</li>
+      </ul>
+    </section>
+
+    <section id="section-6">
+      <h2>6. データモデル</h2>
+
+      <h3>6.1 Job</h3>
+      <pre><code>@dataclass
+class Job:
+    job_id: str                  # j_YYYYMMDDHHmmssNNNN
+    user_email: str
+    status: JobStatus            # Enum: pending/running/completed/failed/expired
+    spreadsheet_id: str | None
+    file_paths: dict             # {"permit": "/uploads/.../permit.pdf", ...}
+    result_path: str | None      # /outputs/.../tariff_*.xlsx
+    summary: dict | None         # rows数/成功数 etc.
+    rows: list[dict] | None      # 結果行（GET /result で返す）
+    progress: dict | None        # {step, label, percent}
+    error: str | None
+    created_at: datetime
+    updated_at: datetime
+    expires_at: datetime         # created_at + 30日
+</code></pre>
+
+      <h3>6.2 永続化</h3>
+      <ul>
+        <li>初期リリース: ファイルシステムに JSON で保存（<code>/jobs/{job_id}.json</code>）。</li>
+        <li>同時アクセスは少ない想定（最大5並列）のためファイルロックで十分。</li>
+        <li>将来規模が大きくなれば SQLite / PostgreSQL に置き換え。</li>
+      </ul>
+    </section>
+
+    <section id="section-7">
+      <h2>7. ファイルストレージ設計</h2>
+
+      <h3>7.1 ディレクトリ構成（コンテナ内）</h3>
+      <pre><code>/data/
+├─ uploads/{job_id}/
+│   ├─ permit.pdf
+│   ├─ po.pdf or po.xlsx
+│   └─ pl.xls or pl.xlsx
+├─ outputs/{job_id}/
+│   └─ tariff_YYYYMMDD_HHmm.xlsx
+├─ jobs/
+│   └─ {job_id}.json
+└─ logs/
+    └─ run_YYYYMMDD_HHmm.log
+</code></pre>
+
+      <h3>7.2 アクセス制御</h3>
+      <ul>
+        <li>ファイルへの直接 URL アクセスは不可。<code>/api/jobs/{job_id}/download</code> 経由のみ。</li>
+        <li>API はリクエストユーザーが <code>job.user_email</code> と一致するかチェック。</li>
+      </ul>
+
+      <h3>7.3 自動削除</h3>
+      <ul>
+        <li>起動時とジョブ作成時に「30日以上前」のジョブをスキャンして削除。</li>
+        <li>cron 的な定期実行は持たない（リクエスト駆動の lazy cleanup）。</li>
+      </ul>
+
+      <h3>7.4 暗号化</h3>
+      <ul>
+        <li>ファイルシステム自体の at-rest 暗号化はホスティング先（クラウドストレージ / OS）に任せる。</li>
+        <li>機密性が高いと判明したら Phase 2 でアプリ層 AES 暗号化を検討。</li>
+      </ul>
+    </section>
+
+    <section id="section-8">
+      <h2>8. フロントエンド設計</h2>
+
+      <h3>8.1 採用方針</h3>
+      <ul>
+        <li><strong>サーバサイドレンダリング（Jinja2）+ vanilla JS</strong> による軽量構成。React/Vue 等の SPA フレームワークは導入しない。</li>
+        <li>理由: 画面数が少ない（6画面）、状態管理が単純（ジョブのステータスポーリングのみ）、SEO 不要、ビルドステップを増やしたくない。</li>
+        <li>モックアップ（<a href="mockup.html">mockup.html</a>）のデザインをそのままテンプレート化。</li>
+      </ul>
+
+      <h3>8.2 主要テンプレート</h3>
+      <table>
+        <thead>
+          <tr><th>テンプレート</th><th>対応画面</th><th>用途</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>base.html</code></td><td>共通</td><td>ヘッダ・フッタ・CSS読込</td></tr>
+          <tr><td><code>login.html</code></td><td>SCR-001-login</td><td>「Googleでログイン」ボタン</td></tr>
+          <tr><td><code>upload.html</code></td><td>SCR-002-upload</td><td>3ファイルドロップゾーン + 実行ボタン</td></tr>
+          <tr><td><code>processing.html</code></td><td>SCR-003-processing</td><td>スピナー + 進行状況。JSがポーリング</td></tr>
+          <tr><td><code>result.html</code></td><td>SCR-004-result</td><td>結果テーブル + サマリ + ダウンロード</td></tr>
+          <tr><td><code>history.html</code></td><td>SCR-005-history</td><td>過去ジョブ一覧</td></tr>
+          <tr><td><code>error.html</code></td><td>SCR-006-error</td><td>認証拒否・処理失敗の表示</td></tr>
+        </tbody>
+      </table>
+
+      <h3>8.3 静的アセット</h3>
+      <ul>
+        <li><code>static/css/app.css</code>: モックアップの CSS をそのまま移植。</li>
+        <li><code>static/js/upload.js</code>: ドラッグ&ドロップ・ファイル検証・アップロード。</li>
+        <li><code>static/js/processing.js</code>: 1秒ごとに <code>/api/jobs/{id}/status</code> をポーリング。完了で <code>/result</code> へ遷移。</li>
+      </ul>
+
+      <h3>8.4 アクセシビリティ</h3>
+      <ul>
+        <li>ボタン・リンクは <code>&lt;button&gt;</code> / <code>&lt;a&gt;</code> を使用（div でない）。</li>
+        <li>フォーム要素には <code>&lt;label&gt;</code> + <code>aria-describedby</code> でヒント付与。</li>
+        <li>処理中の状態変更は <code>aria-live="polite"</code> でスクリーンリーダーへ通知。</li>
+        <li>キーボード操作: Tab で全要素到達可能、Enter で実行可能。</li>
+      </ul>
+    </section>
+
+    <section id="section-9">
+      <h2>9. 既存 CLI モジュールの統合</h2>
+
+      <h3>9.1 統合方針</h3>
+      <ul>
+        <li>CLI モジュールは <strong>変更しない</strong>。Web 層から関数呼び出しする。</li>
+        <li>具体的には <code>tariff_rate_automation</code> パッケージとしてインストール可能にし、<code>from tariff_rate_automation import run_pipeline</code> のように呼ぶ。</li>
+      </ul>
+
+      <h3>9.2 呼び出しインターフェース</h3>
+      <pre><code># CLI 側に追加する公開API（既存ロジックの薄いラッパー）
+def run_pipeline(
+    permit_path: Path,
+    po_path: Path,
+    pl_path: Path,
+    spreadsheet_id: str,
+    config: Config,
+    progress_callback: Callable[[str, int], None] | None = None,
+) -&gt; PipelineResult:
+    """3ファイル + Sheets から関税率を算出し、Excel と結果サマリを返す。"""
+    ...
+
+@dataclass
+class PipelineResult:
+    summary: dict
+    rows: list[dict]
+    output_excel_path: Path
+</code></pre>
+
+      <h3>9.3 進捗通知</h3>
+      <ul>
+        <li>Web 層が <code>progress_callback</code> を渡し、各ステップ完了時に呼ばれる。</li>
+        <li>コールバックは Job の <code>progress</code> フィールドを更新 → フロントがポーリングで取得。</li>
+      </ul>
+
+      <h3>9.4 設定の渡し方</h3>
+      <ul>
+        <li>Web 側は <code>config.yaml</code> を読み、必要箇所だけ上書きして CLI に渡す。</li>
+        <li>例: <code>spreadsheet_id</code> はリクエストごとに変えられるよう、API パラメータで上書き。</li>
+      </ul>
+    </section>
+
+    <section id="section-10">
+      <h2>10. 設定・シークレット管理</h2>
+
+      <h3>10.1 環境変数（必須）</h3>
+      <table>
+        <thead><tr><th>変数</th><th>用途</th></tr></thead>
+        <tbody>
+          <tr><td><code>GOOGLE_OAUTH_CLIENT_ID</code></td><td>OAuth クライアントID</td></tr>
+          <tr><td><code>GOOGLE_OAUTH_CLIENT_SECRET</code></td><td>OAuth クライアントシークレット</td></tr>
+          <tr><td><code>SESSION_SECRET_KEY</code></td><td>セッション Cookie の署名・暗号化キー</td></tr>
+          <tr><td><code>GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON</code></td><td>サービスアカウントJSON（base64 or ファイルパス）</td></tr>
+          <tr><td><code>DATA_DIR</code></td><td>データ保存ディレクトリ（既定 <code>/data</code>）</td></tr>
+          <tr><td><code>ALLOWED_DOMAINS</code></td><td>カンマ区切り（例: <code>hotellikeinterior.com</code>）</td></tr>
+        </tbody>
+      </table>
+
+      <h3>10.2 設定ファイル</h3>
+      <ul>
+        <li><code>web_config.yaml</code>: Web 固有の設定（タイムアウト・同時実行数・ファイルサイズ上限等）</li>
+        <li><code>config.yaml</code>（CLI と共有）: 抽出ロジック設定</li>
+        <li><code>vocabulary.yaml</code>（CLI と共有）: 語彙辞書</li>
+      </ul>
+
+      <h3>10.3 シークレットの取り扱い</h3>
+      <ul>
+        <li>環境変数経由のみ。リポジトリ・コンテナイメージに含めない。</li>
+        <li>ローカル開発時は <code>.env</code> ファイル（<code>.gitignore</code> 必須）。</li>
+        <li>本番では Docker secrets / Cloud KMS / Secret Manager を使用。</li>
+      </ul>
+    </section>
+
+    <section id="section-11">
+      <h2>11. エラーハンドリング</h2>
+      <table>
+        <thead>
+          <tr><th>事象</th><th>HTTPステータス</th><th>挙動</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>未ログイン</td><td>302 → /login</td><td>ログイン画面へリダイレクト</td></tr>
+          <tr><td>ドメイン外ログイン試行</td><td>403</td><td>error.html（「許可されたドメインのみ利用可能」）</td></tr>
+          <tr><td>他人のジョブアクセス</td><td>403</td><td>error.html</td></tr>
+          <tr><td>ファイル形式不正</td><td>400</td><td>JSON エラー（「PDF または Excel をアップロードしてください」）</td></tr>
+          <tr><td>ファイルサイズ超過</td><td>413</td><td>JSON エラー（「10MB 以下にしてください」）</td></tr>
+          <tr><td>許可証PDFのテキスト抽出失敗（スキャン疑い）</td><td>job.status = failed</td><td>error: 「許可証PDFのテキスト抽出に失敗（OCRは未対応）」</td></tr>
+          <tr><td>Sheets API 認証失敗</td><td>job.status = failed</td><td>error: 「粗利表へのアクセス権限がありません」</td></tr>
+          <tr><td>未マッチ（業務的失敗）</td><td>job.status = completed</td><td>各 row の reason に理由記載（ジョブ自体は成功扱い）</td></tr>
+          <tr><td>サーバ内部例外</td><td>500</td><td>error.html + ログにスタックトレース</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="section-12">
+      <h2>12. デプロイ設計（Docker）</h2>
+
+      <h3>12.1 Dockerfile（要点）</h3>
+      <pre><code>FROM python:3.11-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+ENV DATA_DIR=/data
+VOLUME ["/data"]
+EXPOSE 8000
+CMD ["uvicorn", "web.main:app", "--host", "0.0.0.0", "--port", "8000"]
+</code></pre>
+
+      <h3>12.2 docker-compose（ローカル開発用）</h3>
+      <pre><code>services:
+  web:
+    build: .
+    ports: ["8000:8000"]
+    environment:
+      - GOOGLE_OAUTH_CLIENT_ID=${GOOGLE_OAUTH_CLIENT_ID}
+      - GOOGLE_OAUTH_CLIENT_SECRET=${GOOGLE_OAUTH_CLIENT_SECRET}
+      - SESSION_SECRET_KEY=${SESSION_SECRET_KEY}
+      - ALLOWED_DOMAINS=hotellikeinterior.com
+    volumes:
+      - ./data:/data
+      - ./secrets:/app/secrets:ro
+</code></pre>
+
+      <h3>12.3 ホスティング先の候補</h3>
+      <p>詳細は <a href="../../docs/architecture.html">docs/architecture.html</a> で比較。候補は以下：</p>
+      <ul>
+        <li><strong>社内サーバ / 社内PC</strong>: Docker さえ動けばOK。VPN必要。コストゼロ。</li>
+        <li><strong>Google Cloud Run</strong>: Docker をそのままデプロイ。HTTPS自動。月額数千円〜。</li>
+        <li><strong>Render / Railway</strong>: PaaS型。Git push で自動デプロイ。月額無料枠あり。</li>
+        <li><strong>AWS App Runner</strong>: Cloud Run と類似。</li>
+      </ul>
+
+      <h3>12.4 HTTPS</h3>
+      <ul>
+        <li>クラウド (Cloud Run / Render 等) は HTTPS 自動。</li>
+        <li>社内サーバの場合は Caddy / Nginx + Let's Encrypt のリバースプロキシを推奨。</li>
+      </ul>
+    </section>
+
+    <section id="section-13">
+      <h2>13. プロジェクト構成</h2>
+      <pre><code>tariff-rate-automation/
+├─ src/                         # 既存 CLI モジュール（変更なし）
+│  ├─ permit_pdf_reader.py
+│  ├─ pl_reader.py
+│  ├─ po_reader.py
+│  ├─ sheet_reader.py
+│  ├─ normalize_hs.py
+│  ├─ normalize_tariff.py
+│  ├─ vocabulary.py
+│  ├─ matcher.py
+│  ├─ excel_writer.py
+│  └─ pipeline.py               # ★新規: run_pipeline() の公開API
+├─ web/                         # ★新規: Web フロントエンド
+│  ├─ main.py                   # FastAPI エントリ
+│  ├─ routes/
+│  │   ├─ auth.py
+│  │   ├─ upload.py
+│  │   ├─ jobs.py
+│  │   └─ pages.py              # HTML 画面
+│  ├─ middlewares/
+│  │   ├─ auth.py
+│  │   └─ error.py
+│  ├─ job_runner.py             # 非同期実行
+│  ├─ job_store.py              # 状態管理
+│  ├─ file_store.py             # ファイル保存
+│  ├─ templates/                # Jinja2
+│  │   ├─ base.html
+│  │   ├─ login.html
+│  │   ├─ upload.html
+│  │   ├─ processing.html
+│  │   ├─ result.html
+│  │   ├─ history.html
+│  │   └─ error.html
+│  └─ static/
+│      ├─ css/app.css
+│      └─ js/{upload,processing,history}.js
+├─ tests/
+│  ├─ test_web_routes.py        # ★新規
+│  ├─ test_job_runner.py        # ★新規
+│  └─ test_pipeline.py          # 既存ロジックの結合テスト
+├─ data/                        # （Docker volume マウント先）
+├─ secrets/                     # service_account.json 等（.gitignore）
+├─ config.yaml
+├─ web_config.yaml              # ★新規
+├─ vocabulary.yaml
+├─ Dockerfile                   # ★新規
+├─ docker-compose.yml           # ★新規
+├─ .env.example                 # ★新規
+├─ requirements.txt
+└─ README.md
+</code></pre>
+    </section>
+
+    <section id="section-14">
+      <h2>14. UI影響セクション</h2>
+      <p><strong>UI変更あり（新規UI作成）</strong></p>
+      <p>本作業で <strong>6画面の Web UI</strong> を新規追加する。詳細は <a href="../../docs/ui-specification.html">docs/ui-specification.html</a> に記載（同時並行で作成）。</p>
+
+      <h3>14.1 画面一覧</h3>
+      <table>
+        <thead>
+          <tr><th>画面ID</th><th>画面名</th><th>パス</th><th>状態</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>SCR-001-login</td><td>ログイン</td><td>/login</td><td>新規</td></tr>
+          <tr><td>SCR-002-upload</td><td>アップロード</td><td>/</td><td>新規</td></tr>
+          <tr><td>SCR-003-processing</td><td>処理中</td><td>/jobs/{id}/wait</td><td>新規</td></tr>
+          <tr><td>SCR-004-result</td><td>結果</td><td>/jobs/{id}</td><td>新規</td></tr>
+          <tr><td>SCR-005-history</td><td>履歴</td><td>/history</td><td>新規</td></tr>
+          <tr><td>SCR-006-error</td><td>エラー</td><td>各種</td><td>新規</td></tr>
+        </tbody>
+      </table>
+
+      <h3>14.2 デザイン参考</h3>
+      <p><a href="mockup.html">mockup.html</a>（クリッカブルプロトタイプ）をベースに UI仕様書を起こす。デザイントークン（色・タイポ・スペーシング）もモックから抽出。</p>
+
+      <h3>14.3 共通コンポーネント</h3>
+      <ul>
+        <li>ヘッダ（ロゴ / ナビ / ユーザーアバター / ログアウト）</li>
+        <li>ステップインジケータ（3ステップ）</li>
+        <li>ドロップゾーン（ファイル選択）</li>
+        <li>カード（コンテンツのコンテナ）</li>
+        <li>ステータスバッジ（成功 / 失敗 / 要確認）</li>
+        <li>トースト（処理完了通知等）</li>
+        <li>テーブル（結果一覧 / 履歴一覧）</li>
+      </ul>
+    </section>
+
+    <section id="section-15">
+      <h2>15. テスト方針</h2>
+      <ul>
+        <li><strong>既存 CLI テスト</strong>: そのまま維持（pytest）。</li>
+        <li><strong>API テスト</strong>: <code>fastapi.testclient</code> で各エンドポイントをテスト。
+          <ul>
+            <li>認証必須エンドポイントへの未ログインアクセスが 401 を返すか</li>
+            <li>他人のジョブへのアクセスが 403 を返すか</li>
+            <li>ファイル形式不正で 400 を返すか</li>
+          </ul>
+        </li>
+        <li><strong>ジョブランナーテスト</strong>: パイプラインをモックして状態遷移を確認。</li>
+        <li><strong>OAuthテスト</strong>: 本物の Google には繋がず、Authlib のモックでフロー検証。</li>
+        <li><strong>E2Eテスト（手動）</strong>: 実サンプル3ファイルをアップロード → 結果に 7.4% が表示されるか目視確認。</li>
+      </ul>
+    </section>
+
+    <section id="section-16">
+      <h2>16. 既知の未決事項</h2>
+      <table>
+        <thead>
+          <tr><th>#</th><th>項目</th><th>状況</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>1</td><td>ホスティング先の選定</td><td>⏳ <a href="../../docs/architecture.html">architecture.html</a> で複数候補を比較してから決定</td></tr>
+          <tr><td>2</td><td>OAuth クライアントID の発行</td><td>⏳ Google Cloud Console で発行が必要（実装着手前）</td></tr>
+          <tr><td>3</td><td>セッション保存先（メモリ / Redis）</td><td>⏳ 初期はメモリ + Cookie 暗号化。スケール時に再評価</td></tr>
+          <tr><td>4</td><td>許可ドメインリストの確定</td><td>⏳ 利用者のメールドメインを確認</td></tr>
+          <tr><td>5</td><td>ファイルアップロードのチャンク対応</td><td>⏳ 10MB 以下なら不要。要件超えたら検討</td></tr>
+          <tr><td>6</td><td>本番ログ集約（クラウドロガー等）</td><td>⏳ ホスティング先決定後に検討</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+  </main>
+
+  <footer class="doc-footer">
+    <a class="back-link" href="../../docs/index.html">← ドキュメントトップへ戻る</a>
+  </footer>
+
+</body>
+</html>

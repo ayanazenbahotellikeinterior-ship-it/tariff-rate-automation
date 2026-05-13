@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>設計書 — 粗利表 関税率更新の自動化</title>
+  <link rel="stylesheet" href="../../docs/assets/design-system.css">
+</head>
+<body>
+
+  <header class="doc-header">
+    <a class="back-link" href="../../docs/index.html">← ドキュメントトップへ戻る</a>
+    <nav aria-label="パンくず" class="breadcrumb">
+      <ol>
+        <li><a href="../../docs/index.html">docs</a></li>
+        <li><a href="../">.steering</a></li>
+        <li>20260513-tariff-rate-automation</li>
+        <li aria-current="page">design.html</li>
+      </ol>
+    </nav>
+    <h1>設計書 — 粗利表 関税率更新の自動化</h1>
+    <p class="doc-meta">ドキュメントID: DSN-20260513-001 / 最終更新: 2026-05-13 / バージョン: 0.2（サンプル検証反映）/ 関連: <a href="requirements.html">requirements.html</a></p>
+  </header>
+
+  <details class="toc" open>
+    <summary>目次</summary>
+    <nav aria-label="目次">
+      <ol>
+        <li><a href="#section-1">1. 設計方針</a></li>
+        <li><a href="#section-2">2. アーキテクチャ概要</a></li>
+        <li><a href="#section-3">3. データフロー</a></li>
+        <li><a href="#section-4">4. モジュール構成</a></li>
+        <li><a href="#section-5">5. 中間データ構造</a></li>
+        <li><a href="#section-6">6. 抽出ロジック詳細</a></li>
+        <li><a href="#section-7">7. マッチングロジック（三ホップ突合）</a></li>
+        <li><a href="#section-8">8. 中間Excel 出力仕様（3シート）</a></li>
+        <li><a href="#section-9">9. 設定ファイル仕様（config.yaml）</a></li>
+        <li><a href="#section-10">10. エラーハンドリング</a></li>
+        <li><a href="#section-11">11. ログ・可観測性</a></li>
+        <li><a href="#section-12">12. 依存ライブラリ</a></li>
+        <li><a href="#section-13">13. プロジェクト構成</a></li>
+        <li><a href="#section-14">14. UI影響セクション</a></li>
+        <li><a href="#section-15">15. テスト方針</a></li>
+        <li><a href="#section-16">16. 既知の未決事項</a></li>
+      </ol>
+    </nav>
+  </details>
+
+  <main>
+
+    <section id="section-1">
+      <h2>1. 設計方針</h2>
+      <ul>
+        <li><strong>単一CLIスクリプト</strong> として実装し、固定入力フォルダを起点に1コマンドで完結させる。</li>
+        <li>入力種別ごとに <strong>抽出モジュールを分離</strong>。PO は <strong>列マッピング設定で案件ごとの様式差を吸収</strong>。</li>
+        <li>抽出後は <strong>正規化済み DataFrame</strong> に統一し、突合ロジックは純粋関数として実装。</li>
+        <li>突合キーは <strong>HSコードの正規化キー（区切り除去・頭6桁）</strong>。語彙差は <strong>YAML外出しの辞書</strong> で吸収。</li>
+        <li>「Set up」マーカーは <strong>PL の TOPS+PANTS の2行に展開</strong> し、HS一致を確認。</li>
+        <li>マッチ失敗は <strong>エラーにせず、未マッチ理由列に「どのホップで失敗したか」を記載</strong> して人が補完。</li>
+        <li>中間Excelは <strong>3シート構成（結果 / 証跡 / サマリ）</strong> で監査性を確保。</li>
+      </ul>
+    </section>
+
+    <section id="section-2">
+      <h2>2. アーキテクチャ概要</h2>
+      <figure>
+        <svg viewBox="0 0 780 380" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="アーキテクチャ概要図">
+          <title>アーキテクチャ概要</title>
+          <defs>
+            <marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+              <path d="M0,0 L10,5 L0,10 z" fill="#4338ca"/>
+            </marker>
+          </defs>
+
+          <g font-family="sans-serif" font-size="12" fill="#0f172a">
+            <text x="80" y="30" text-anchor="middle" font-size="13" fill="#475569">[入力層]</text>
+            <rect x="20" y="50" width="120" height="40" rx="6" fill="#eef2ff" stroke="#4338ca"/>
+            <text x="80" y="74" text-anchor="middle">許可証PDF</text>
+            <rect x="20" y="100" width="120" height="40" rx="6" fill="#eef2ff" stroke="#4338ca"/>
+            <text x="80" y="124" text-anchor="middle">PL Excel</text>
+            <rect x="20" y="150" width="120" height="40" rx="6" fill="#eef2ff" stroke="#4338ca"/>
+            <text x="80" y="174" text-anchor="middle">PO (xlsx/pdf)</text>
+            <rect x="20" y="200" width="120" height="40" rx="6" fill="#eef2ff" stroke="#4338ca"/>
+            <text x="80" y="224" text-anchor="middle">粗利表（Sheets）</text>
+            <rect x="20" y="250" width="120" height="40" rx="6" fill="#dbeafe" stroke="#1d4ed8"/>
+            <text x="80" y="266" text-anchor="middle" font-size="11">vocabulary.yaml</text>
+            <text x="80" y="282" text-anchor="middle" fill="#1e3a8a" font-size="10">語彙辞書</text>
+          </g>
+
+          <g font-family="sans-serif" font-size="11" fill="#0f172a">
+            <text x="320" y="30" text-anchor="middle" font-size="13" fill="#475569">[抽出層]</text>
+            <rect x="240" y="50" width="160" height="40" rx="6" fill="#fef9c3" stroke="#a16207"/>
+            <text x="320" y="74" text-anchor="middle">permit_pdf_reader</text>
+            <rect x="240" y="100" width="160" height="40" rx="6" fill="#fef9c3" stroke="#a16207"/>
+            <text x="320" y="124" text-anchor="middle">pl_reader</text>
+            <rect x="240" y="150" width="160" height="40" rx="6" fill="#fef9c3" stroke="#a16207"/>
+            <text x="320" y="174" text-anchor="middle">po_reader</text>
+            <rect x="240" y="200" width="160" height="40" rx="6" fill="#fef9c3" stroke="#a16207"/>
+            <text x="320" y="224" text-anchor="middle">sheet_reader</text>
+          </g>
+
+          <g font-family="sans-serif" font-size="11" fill="#0f172a">
+            <text x="540" y="30" text-anchor="middle" font-size="13" fill="#475569">[正規化+突合層]</text>
+            <rect x="460" y="60" width="160" height="60" rx="6" fill="#e0e7ff" stroke="#4338ca"/>
+            <text x="540" y="85" text-anchor="middle">normalize_hs</text>
+            <text x="540" y="105" text-anchor="middle" fill="#475569">区切り除去・頭6桁</text>
+
+            <rect x="460" y="130" width="160" height="60" rx="6" fill="#e0e7ff" stroke="#4338ca"/>
+            <text x="540" y="155" text-anchor="middle">normalize_tariff</text>
+            <text x="540" y="175" text-anchor="middle" fill="#475569">S/G除去・FREE→0%</text>
+
+            <rect x="460" y="200" width="160" height="80" rx="8" fill="#dcfce7" stroke="#15803d"/>
+            <text x="540" y="225" text-anchor="middle">matcher</text>
+            <text x="540" y="245" text-anchor="middle" fill="#15803d">三ホップ突合</text>
+            <text x="540" y="263" text-anchor="middle" fill="#475569">Set up展開</text>
+          </g>
+
+          <g font-family="sans-serif" font-size="12" fill="#0f172a">
+            <text x="700" y="30" text-anchor="middle" font-size="13" fill="#475569">[出力層]</text>
+            <rect x="640" y="150" width="100" height="100" rx="8" fill="#fee2e2" stroke="#b91c1c"/>
+            <text x="690" y="180" text-anchor="middle">excel_writer</text>
+            <text x="690" y="200" text-anchor="middle" fill="#475569" font-size="10">3シート構成</text>
+            <text x="690" y="216" text-anchor="middle" fill="#475569" font-size="10">結果/証跡/サマリ</text>
+          </g>
+
+          <g stroke="#4338ca" stroke-width="1.5" fill="none">
+            <line x1="140" y1="70"  x2="240" y2="70"  marker-end="url(#arr2)"/>
+            <line x1="140" y1="120" x2="240" y2="120" marker-end="url(#arr2)"/>
+            <line x1="140" y1="170" x2="240" y2="170" marker-end="url(#arr2)"/>
+            <line x1="140" y1="220" x2="240" y2="220" marker-end="url(#arr2)"/>
+            <line x1="140" y1="270" x2="240" y2="170" marker-end="url(#arr2)" stroke-dasharray="3 3"/>
+
+            <line x1="400" y1="70"  x2="460" y2="90"  marker-end="url(#arr2)"/>
+            <line x1="400" y1="120" x2="460" y2="160" marker-end="url(#arr2)"/>
+            <line x1="400" y1="170" x2="460" y2="220" marker-end="url(#arr2)"/>
+            <line x1="400" y1="220" x2="460" y2="240" marker-end="url(#arr2)"/>
+
+            <line x1="540" y1="120" x2="540" y2="200" marker-end="url(#arr2)"/>
+            <line x1="540" y1="190" x2="540" y2="200" />
+            <line x1="620" y1="240" x2="640" y2="200" marker-end="url(#arr2)"/>
+          </g>
+
+          <g font-family="sans-serif" font-size="11" fill="#0f172a">
+            <rect x="240" y="310" width="380" height="50" rx="8" fill="#f1f5f9" stroke="#475569"/>
+            <text x="430" y="332" text-anchor="middle" font-size="12">main（CLIエントリ）</text>
+            <text x="430" y="350" text-anchor="middle" fill="#475569">設定読込 → 各抽出 → 正規化 → 突合 → 出力 → サマリ</text>
+          </g>
+        </svg>
+        <figcaption>図 1. アーキテクチャ概要（4層構成 + 正規化モジュール + 語彙辞書）</figcaption>
+      </figure>
+    </section>
+
+    <section id="section-3">
+      <h2>3. データフロー</h2>
+      <ol>
+        <li><code>main</code> が <code>config.yaml</code> と <code>vocabulary.yaml</code>（語彙辞書）を読み、<code>./inputs/</code> をスキャン。</li>
+        <li>ファイル種別判定（拡張子 + ファイル名 + 内容ヘッダ）で許可証/PL/POに振り分け、各 reader を呼び出す。</li>
+        <li>各 reader は <strong>正規化済み DataFrame</strong> を返す（第5節）。HSコード・関税率はこの段階で正規化キーも付与。</li>
+        <li><code>matcher</code> が <strong>品番起点で三ホップ突合</strong> し、Set up マーカーがあれば PL の TOPS+PANTS に展開・HS一致確認。</li>
+        <li><code>excel_writer</code> が <strong>3シート（結果/証跡/サマリ）</strong> で中間Excelを書き出し。</li>
+        <li>処理サマリをコンソール表示 + サマリシートに記録。</li>
+      </ol>
+    </section>
+
+    <section id="section-4">
+      <h2>4. モジュール構成</h2>
+      <table>
+        <thead>
+          <tr><th>モジュール</th><th>責務</th><th>主な入出力</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>main.py</code></td><td>CLIエントリ・オーケストレーション</td><td>引数なし／設定・辞書を参照</td></tr>
+          <tr><td><code>config.py</code></td><td>YAML設定・辞書の読込・検証・型付け</td><td>in: <code>config.yaml</code>, <code>vocabulary.yaml</code> ／ out: <code>Config</code> dataclass</td></tr>
+          <tr><td><code>file_classifier.py</code></td><td>入力フォルダ内のファイルを種別ごとに振り分ける</td><td>in: フォルダパス ／ out: 種別ごとのパスリスト</td></tr>
+          <tr><td><code>permit_pdf_reader.py</code></td><td>許可証PDFから 欄/品名/税表番号/品目番号/関税率 を抽出</td><td>in: PDFパス ／ out: <code>permits_df</code></td></tr>
+          <tr><td><code>pl_reader.py</code></td><td>PL（Excel）から DESCRIPTION / HSコード を抽出</td><td>in: Excelパス ／ out: <code>pl_df</code></td></tr>
+          <tr><td><code>po_reader.py</code></td><td>PO（Excel優先・なければPDF）から 品番 / Item / gender / Quality / Set up を抽出。<strong>列マッピング設定対応</strong></td><td>in: ファイルパス + 列マッピング ／ out: <code>po_df</code></td></tr>
+          <tr><td><code>sheet_reader.py</code></td><td>Sheets API で粗利表のC列（品番）と行順を取得</td><td>in: シートID + 範囲 ／ out: <code>profit_df</code></td></tr>
+          <tr><td><code>normalize_hs.py</code></td><td>HSコードの正規化（区切り除去・頭N桁切出し）</td><td>純粋関数</td></tr>
+          <tr><td><code>normalize_tariff.py</code></td><td>関税率の正規化（プレフィックス除去・<code>FREE</code> → <code>0%</code>）</td><td>純粋関数</td></tr>
+          <tr><td><code>vocabulary.py</code></td><td>語彙辞書（PO Item → PL DESCRIPTION 語彙）のロードと適用</td><td>in: <code>vocabulary.yaml</code> ／ out: マッピング関数</td></tr>
+          <tr><td><code>matcher.py</code></td><td>三ホップ突合 + Set up展開 + 未マッチ理由付与</td><td>in: 各DF + 辞書 ／ out: 結果DF</td></tr>
+          <tr><td><code>excel_writer.py</code></td><td>3シート構成（結果/証跡/サマリ）で中間Excelを書き出す</td><td>in: 結果DF + サマリ ／ out: xlsx</td></tr>
+          <tr><td><code>logger.py</code></td><td>ログ初期化（コンソール + ファイル）</td><td>—</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="section-5">
+      <h2>5. 中間データ構造</h2>
+
+      <h3>5.1 <code>permits_df</code>（許可証PDF抽出結果）</h3>
+      <table>
+        <thead><tr><th>列</th><th>型</th><th>説明</th></tr></thead>
+        <tbody>
+          <tr><td>欄</td><td>int</td><td>許可証内の欄番号（01〜N）</td></tr>
+          <tr><td>品名</td><td>str</td><td>英語の品名（例: WOMEN'S PYJAMAS,NIGHTDRESS OF COTTON）</td></tr>
+          <tr><td>税表番号</td><td>str</td><td>例: 6208.21</td></tr>
+          <tr><td>品目番号</td><td>str</td><td>例: 6208.21-000</td></tr>
+          <tr><td>関税率_raw</td><td>str</td><td>抽出時の生表記（例: <code>G 7.4%</code>, <code>G FREE</code>）</td></tr>
+          <tr><td>関税率</td><td>str</td><td>正規化後（例: <code>7.4%</code>, <code>0%</code>）</td></tr>
+          <tr><td>関税率_prefix</td><td>str</td><td>プレフィックス（<code>S</code>/<code>G</code>/空）</td></tr>
+          <tr><td>hs_key</td><td>str</td><td>突合用キー（区切り除去・頭6桁。設定で粒度変更可）</td></tr>
+          <tr><td>source_pdf</td><td>str</td><td>抽出元PDFファイル名</td></tr>
+        </tbody>
+      </table>
+
+      <h3>5.2 <code>pl_df</code>（PL抽出結果）</h3>
+      <table>
+        <thead><tr><th>列</th><th>型</th><th>説明</th></tr></thead>
+        <tbody>
+          <tr><td>description</td><td>str</td><td>PL上のDESCRIPTION（大文字化済み）</td></tr>
+          <tr><td>hs_code_raw</td><td>str</td><td>抽出時の生表記（例: <code>6208210000</code>, <code>6302.31-0000</code>）</td></tr>
+          <tr><td>hs_key</td><td>str</td><td>突合用キー（区切り除去・頭6桁）</td></tr>
+          <tr><td>row_no</td><td>int</td><td>PL内の元行番号（証跡用）</td></tr>
+          <tr><td>encoded_no</td><td>str</td><td>编号（HLI-001等。参考情報）</td></tr>
+        </tbody>
+      </table>
+
+      <h3>5.3 <code>po_df</code>（PO抽出結果）</h3>
+      <table>
+        <thead><tr><th>列</th><th>型</th><th>説明</th></tr></thead>
+        <tbody>
+          <tr><td>hinban</td><td>str</td><td>品番</td></tr>
+          <tr><td>item</td><td>str</td><td>PO上のItem列値（例: <code>Cotton twill stripe pajama</code>, <code>bottoms</code>）</td></tr>
+          <tr><td>gender</td><td>str</td><td>PO上のgender/Size列値（例: <code>WOMEN</code>, <code>men</code>）</td></tr>
+          <tr><td>quality</td><td>str</td><td>PO上のMaterial/Quality列値（例: <code>100% cotton 57/58 110GSM</code>）</td></tr>
+          <tr><td>material</td><td>str</td><td>素材だけを抽出した文字列（例: <code>100% cotton</code>, <code>100% silk</code>）</td></tr>
+          <tr><td>is_setup</td><td>bool</td><td>Set upマーカーの有無</td></tr>
+          <tr><td>match_tokens</td><td>list[str]</td><td>突合用トークン（gender語 + 素材 + Item語彙適用結果）</td></tr>
+          <tr><td>source_file</td><td>str</td><td>抽出元ファイル名</td></tr>
+        </tbody>
+      </table>
+
+      <h3>5.4 <code>profit_df</code>（粗利表 ＝ 出力ベース）</h3>
+      <ul>
+        <li>粗利表のC列（品番）と行順を保持。データは <strong>3行目以降</strong>。</li>
+        <li>突合後に <strong>関税率</strong>・<strong>未マッチ理由</strong>・<strong>証跡</strong> 列を内部追加。</li>
+      </ul>
+    </section>
+
+    <section id="section-6">
+      <h2>6. 抽出ロジック詳細</h2>
+
+      <h3>6.1 輸入許可証 PDF（<code>permit_pdf_reader</code>）</h3>
+      <ul>
+        <li>ライブラリ: <strong>pdfplumber</strong>（テーブル抽出 + テキスト抽出の併用）。</li>
+        <li><strong>欄区切り</strong>: 正規表現 <code>&lt;\s*(\d+)\s*欄&gt;</code> で各品目ブロックを切り出し。</li>
+        <li>各ブロック内で以下のラベル直後の値を取得（テキスト位置 or キーワード後の数値で判定）：
+          <ul>
+            <li>品名: 英語の商品説明文（欄マーカー直下）</li>
+            <li>税表番号: <code>(\d{4}\.\d{2}(?:-\d)?)</code></li>
+            <li>品目番号: <code>(\d{4}\.\d{2}-\d{3})</code></li>
+            <li>関税率: <code>([GS]?)\s*(\d+(?:\.\d+)?%|FREE)</code></li>
+          </ul>
+        </li>
+        <li>第一手はテーブル抽出、失敗時は正規表現フォールバック。</li>
+        <li>抽出後、<code>normalize_tariff</code> と <code>normalize_hs</code> を適用。</li>
+      </ul>
+
+      <h3>6.2 PL Excel（<code>pl_reader</code>）</h3>
+      <ul>
+        <li>ライブラリ: <strong>openpyxl + pandas</strong>（<code>.xls</code> 旧形式は <code>xlrd</code> または事前変換）。</li>
+        <li>ヘッダ行・列マッピング（DESCRIPTION列・HSコード列）は <code>config.yaml</code> で指定。</li>
+        <li>HSコードの生表記をそのまま保持しつつ <code>normalize_hs</code> で <code>hs_key</code> を生成。</li>
+        <li>空行・空DESCRIPTION行はスキップ。</li>
+      </ul>
+
+      <h3>6.3 PO（<code>po_reader</code>）</h3>
+      <ul>
+        <li><strong>Excel優先、なければPDF</strong>。同案件で混在する場合は両方読んで連結。</li>
+        <li>Excel: openpyxl。 PDF: pdfplumber でテーブル抽出。</li>
+        <li><strong>列マッピング</strong>: <code>config.yaml</code> の <code>po.column_mapping</code> で「品番列名」「Item列名」「gender列名」「素材を含む列名候補リスト」「Set upマーカー列」を指定。</li>
+        <li>素材抽出: Quality 列の文字列から <code>(\d+%\s*\w+|\d+%\s*[\w-]+(?:\s+\w+)?)</code> 等で素材部分を切り出し。</li>
+        <li>Set upマーカー: 指定列の値が <code>Set up</code>（大文字小文字無視）に一致する場合 <code>is_setup=True</code>。</li>
+        <li><code>match_tokens</code> 生成: gender語（WOMEN→[WOMEN, WOMEN'S, LADIES]）+ 素材語 + 語彙辞書経由のItem語（bottoms→PANTS等）を結合。</li>
+      </ul>
+
+      <h3>6.4 粗利表（<code>sheet_reader</code>）</h3>
+      <ul>
+        <li>ライブラリ: <strong>google-api-python-client + google-auth</strong>。</li>
+        <li>認証: <strong>サービスアカウント（閲覧権限）</strong>。粗利表側でサービスアカウントのメールに閲覧権限を共有。</li>
+        <li>シートID・対象シート名・データ開始行（3）・品番列（C列）は <code>config.yaml</code> で指定。</li>
+        <li>取得結果は粗利表の行順を保持した DataFrame。</li>
+      </ul>
+
+      <h3>6.5 HSコード正規化（<code>normalize_hs</code>）</h3>
+      <pre><code>def normalize_hs(raw: str, depth: int = 6) -&gt; str:
+    """区切り文字を除去し、先頭 depth 桁を返す。
+
+    例:
+      "6208210000"  → "620821"
+      "6302.31-0000" → "630231"
+      "6208.21-000" → "620821"
+    """
+    digits = re.sub(r"\D", "", raw or "")
+    return digits[:depth]
+</code></pre>
+      <p class="doc-meta">既定 depth=6（業務上のHS分類粒度）。設定で 7/9 桁にも切替可能（R-07）。</p>
+
+      <h3>6.6 関税率正規化（<code>normalize_tariff</code>）</h3>
+      <pre><code>def normalize_tariff(raw: str) -&gt; tuple[str, str]:
+    """(prefix, rate) を返す。
+
+    例:
+      "S 4.5%" → ("S", "4.5%")
+      "G 7.4%" → ("G", "7.4%")
+      "G FREE" → ("G", "0%")
+      "5.4%"   → ("", "5.4%")
+    """
+    m = re.match(r"\s*([GS])?\s*(FREE|\d+(?:\.\d+)?%)\s*", raw or "")
+    if not m:
+        return ("", "")
+    prefix = m.group(1) or ""
+    val = "0%" if m.group(2) == "FREE" else m.group(2)
+    return (prefix, val)
+</code></pre>
+    </section>
+
+    <section id="section-7">
+      <h2>7. マッチングロジック（三ホップ突合）</h2>
+
+      <h3>7.1 三ホップの定義</h3>
+      <ol>
+        <li><strong>ホップ1（PO引き当て）</strong>: <code>profit_df.品番</code> → <code>po_df.hinban</code> を完全一致で引き、<code>match_tokens</code> と <code>is_setup</code> を取得。失敗 → 「POに品番なし」。</li>
+        <li><strong>ホップ2（PL DESCRIPTION 検索）</strong>: <code>match_tokens</code> を部分一致AND で <code>pl_df.description</code> に当て、対応行を取得。<code>is_setup=True</code> なら TOPS と PANTS の2行を引く。失敗 → 「PLにItem/Quality該当なし（検索キー: ...）」。Set up で2行の <code>hs_key</code> が不一致 → 「PLでSet up展開時にHS不一致」。</li>
+        <li><strong>ホップ3（許可証検索）</strong>: PLの <code>hs_key</code> で <code>permits_df.hs_key</code> を引き、正規化済み関税率を取得。失敗 → 「許可証に該当HSコードなし」。</li>
+      </ol>
+
+      <h3>7.2 部分一致 AND の評価</h3>
+      <ul>
+        <li><code>match_tokens</code> の各トークンが <strong>すべて</strong> DESCRIPTION に部分一致する行をヒットとみなす。</li>
+        <li>大文字小文字・前後空白は事前正規化。</li>
+        <li>複数行ヒット時:
+          <ul>
+            <li><code>is_setup=True</code> かつヒット2行が TOPS と PANTS → OK（HS一致確認へ）</li>
+            <li>それ以外で複数ヒット → 未マッチ扱い（候補を未マッチ理由に列挙、人に判断委ねる）</li>
+          </ul>
+        </li>
+      </ul>
+
+      <h3>7.3 突合の擬似コード</h3>
+      <pre><code>for row in profit_df.itertuples():
+    hinban = row.品番
+    po = po_df.query("hinban == @hinban")
+    if po.empty:
+        result.append((None, "POに品番なし")); continue
+
+    tokens = po.iloc[0].match_tokens
+    is_setup = po.iloc[0].is_setup
+    pl_hits = pl_df[pl_df.description.apply(lambda d: all(t in d for t in tokens))]
+
+    if is_setup:
+        if len(pl_hits) != 2:
+            result.append((None, f"PL Set up展開で2行マッチせず（{len(pl_hits)}行）")); continue
+        keys = pl_hits.hs_key.unique()
+        if len(keys) &gt; 1:
+            result.append((None, f"PLでSet up展開時にHS不一致（{keys.tolist()}）")); continue
+        hs_key = keys[0]
+    else:
+        if len(pl_hits) == 0:
+            result.append((None, f"PLにItem/Quality該当なし（検索キー: {'+'.join(tokens)}）")); continue
+        if len(pl_hits) &gt; 1:
+            descs = pl_hits.description.tolist()
+            result.append((None, f"PLで複数候補ヒット（{descs}）人が選択")); continue
+        hs_key = pl_hits.iloc[0].hs_key
+
+    permit = permits_df.query("hs_key == @hs_key")
+    if permit.empty:
+        result.append((None, f"許可証に該当HSコードなし（hs_key={hs_key}）")); continue
+
+    result.append((permit.iloc[0].関税率, None))
+</code></pre>
+
+      <h3>7.4 語彙辞書の適用（<code>vocabulary</code>）</h3>
+      <p>PO の Item / gender の語彙を PL 側の語彙に変換するための辞書。<code>vocabulary.yaml</code> に外出し。</p>
+      <pre><code># vocabulary.yaml
+gender:
+  WOMEN: ["WOMEN", "WOMEN'S", "LADIES"]
+  MEN: ["MEN", "MEN'S", "MENS"]
+item:
+  "bottoms": ["PANTS"]
+  "long sleeves": ["TOPS"]
+  "dress": ["DRESS"]
+  "robe": ["ROBE"]
+  "set up": ["SETS"]
+  "Cotton twill stripe pajama": ["COTTON", "TWILL", "STRIPE", "PAJAMA"]
+material:
+  "100% cotton": ["COTTON"]
+  "100% silk": []   # PL側にSILK表記がない案件があるため空（要 R-08 対応）
+  "100% linen": ["LINEN"]
+</code></pre>
+      <p>適用ロジック: PO の各値（gender / item / material）に対し、辞書のキー一致で <strong>候補トークンのリスト</strong> を取得し、それらすべてを <code>match_tokens</code> に統合。</p>
+    </section>
+
+    <section id="section-8">
+      <h2>8. 中間Excel 出力仕様（3シート）</h2>
+
+      <h3>8.1 ファイル名</h3>
+      <p><code>./outputs/tariff_YYYYMMDD_HHmm.xlsx</code></p>
+
+      <h3>8.2 シート1「結果」 — 粗利表貼付用</h3>
+      <table>
+        <thead>
+          <tr><th>列</th><th>内容</th><th>書式</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>A: No</td><td>粗利表の行番号（3始まり）</td><td>整数</td></tr>
+          <tr><td>B: 品番</td><td>粗利表C列の品番</td><td>文字列</td></tr>
+          <tr><td>C: 関税率</td><td>X.X% 形式（FREE は 0%）</td><td>中央寄せ・太字</td></tr>
+          <tr><td>D: 未マッチ理由</td><td>マッチ失敗時のみ</td><td>文字色 #B91C1C</td></tr>
+        </tbody>
+      </table>
+
+      <h3>8.3 シート2「証跡」 — 突合経路（監査用）</h3>
+      <table>
+        <thead>
+          <tr><th>列</th><th>内容</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>品番</td><td>—</td></tr>
+          <tr><td>PO Item / gender / 素材</td><td>PO抽出値</td></tr>
+          <tr><td>マッチ語彙（導出）</td><td><code>match_tokens</code> を <code>+</code> 区切りで表示</td></tr>
+          <tr><td>PL DESCRIPTION</td><td>ヒット行のDESCRIPTION（Set upはセル内改行で2行）</td></tr>
+          <tr><td>PL HSコード</td><td>生表記</td></tr>
+          <tr><td>HS正規化(頭6桁)</td><td><code>hs_key</code></td></tr>
+          <tr><td>許可証欄</td><td>欄番号</td></tr>
+          <tr><td>許可証品名 / 品目番号</td><td>—</td></tr>
+          <tr><td>関税率</td><td>—</td></tr>
+          <tr><td>ステータス</td><td>✅成功 / ❌未マッチ（理由付き）</td></tr>
+        </tbody>
+      </table>
+
+      <h3>8.4 シート3「サマリ」 — 処理実行レポート</h3>
+      <ul>
+        <li>実行日時 / 入力フォルダ / 読み込んだファイル一覧</li>
+        <li>対象品番数 / マッチ成功件数 / マッチ率(%)</li>
+        <li>未マッチ理由の内訳件数</li>
+        <li>警告（Set up展開件数、複数ヒット件数等）</li>
+      </ul>
+
+      <h3>8.5 書式（共通）</h3>
+      <ul>
+        <li>ヘッダ行: 太字・背景 <code>#E0E7FF</code></li>
+        <li>未マッチ行: 関税率列をグレー網掛け <code>#F3F4F6</code></li>
+        <li>HS関連列: フォント <code>Consolas</code>（等幅）</li>
+      </ul>
+    </section>
+
+    <section id="section-9">
+      <h2>9. 設定ファイル仕様（<code>config.yaml</code>）</h2>
+      <pre><code>input_dir: "./inputs"
+output_dir: "./outputs"
+
+# Google Sheets
+sheets:
+  credentials_path: "./secrets/service_account.json"
+  spreadsheet_id: "1AbCdEf..."
+  sheet_name: "粗利表"
+  header_rows: 2                # ヘッダ行数（データは 3 行目以降）
+  hinban_column: "C"            # 品番が入っている列
+  data_range: "A3:AJ"           # データ取得範囲
+  tariff_column: "AJ"           # 関税数式列（Phase 2 用に保持）
+
+# 許可証PDF
+permit:
+  page_marker_regex: "<\\s*(\\d+)\\s*欄>"
+  hs_normalize_depth: 6         # HS正規化の桁数（6 or 9）
+
+# PL
+pl:
+  sheet_name: "PL"
+  header_row: 1                 # 1始まり。データは2行目以降
+  description_column: "DESCRIPTION"
+  hs_column: "H S CODE"
+
+# PO（案件ごとに違うので、列名 or 列インデックスで指定）
+po:
+  header_row: 1
+  column_mapping:
+    hinban: "No"                # 案件によっては "Code", "品番" 等に変更
+    item: "Item"
+    gender: ["gender", "Size"]  # 候補リスト（先に見つかった方を採用）
+    material_candidates: ["Material", "Quality"]
+    setup_marker_column: null   # 空欄列の場合は列インデックスで指定
+
+# ファイル種別判定
+classify:
+  permit_filename_pattern: ".*(輸入許可|許可書|import_permit).*\\.pdf$"
+  pl_filename_pattern: ".*(packing|PL).*\\.(xlsx|xls)$"
+  po_filename_pattern: ".*(PO|invoice|order).*\\.(xlsx|xls|pdf)$"
+
+# 語彙辞書ファイル
+vocabulary_path: "./vocabulary.yaml"
+</code></pre>
+    </section>
+
+    <section id="section-10">
+      <h2>10. エラーハンドリング</h2>
+      <table>
+        <thead>
+          <tr><th>事象</th><th>挙動</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>入力フォルダが空 / 必須種別が見つからない</td><td>エラーメッセージで終了（非ゼロ exit）</td></tr>
+          <tr><td>PDFのテキスト抽出に失敗（スキャン疑い）</td><td>該当ファイル名をログ、処理は継続。サマリに記録</td></tr>
+          <tr><td>Excel列マッピング不一致</td><td>「設定ファイル <code>config.yaml</code> の <code>pl.description_column</code> が不一致」で終了</td></tr>
+          <tr><td>Sheets API 認証失敗</td><td>「サービスアカウント <code>xxx@..</code> を粗利表に共有してください」で終了</td></tr>
+          <tr><td>突合の各ホップで未マッチ</td><td>未マッチ理由を記載し処理継続</td></tr>
+          <tr><td>許可証で同一 hs_key に複数欄ヒット（要件外）</td><td>warning を出して最初の値を採用。証跡列に複数欄番号を記載</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="section-11">
+      <h2>11. ログ・可観測性</h2>
+      <ul>
+        <li>標準出力: 処理サマリ（対象品番数 / 成功 / 未マッチ × 理由別件数 / 警告件数）。</li>
+        <li>ログファイル: <code>./logs/run_YYYYMMDD_HHmm.log</code>。読み込んだファイル一覧、各ホップでの件数、例外スタック。</li>
+        <li>ログレベル: 既定 INFO、<code>--verbose</code> で DEBUG。</li>
+      </ul>
+    </section>
+
+    <section id="section-12">
+      <h2>12. 依存ライブラリ</h2>
+      <table>
+        <thead>
+          <tr><th>ライブラリ</th><th>用途</th><th>バージョン目安</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>pdfplumber</td><td>許可証 / PO PDF の抽出</td><td>0.11.x</td></tr>
+          <tr><td>openpyxl</td><td>Excel (.xlsx) 読み書き</td><td>3.1.x</td></tr>
+          <tr><td>xlrd</td><td>Excel (.xls) 旧形式の読み込み</td><td>2.0.x（PL.xls が旧形式のため必要）</td></tr>
+          <tr><td>pandas</td><td>DataFrame による中間表現・突合</td><td>2.2.x</td></tr>
+          <tr><td>google-api-python-client</td><td>Sheets 読み込み</td><td>2.x</td></tr>
+          <tr><td>google-auth</td><td>サービスアカウント認証</td><td>2.x</td></tr>
+          <tr><td>PyYAML</td><td>設定・辞書ファイル読込</td><td>6.x</td></tr>
+        </tbody>
+      </table>
+      <p class="doc-meta">Python 3.11 以上。依存は <code>requirements.txt</code> に固定。</p>
+    </section>
+
+    <section id="section-13">
+      <h2>13. プロジェクト構成（フォルダ・ファイル）</h2>
+      <pre><code>tariff-rate-automation/
+├─ src/
+│  ├─ main.py
+│  ├─ config.py
+│  ├─ file_classifier.py
+│  ├─ permit_pdf_reader.py
+│  ├─ pl_reader.py
+│  ├─ po_reader.py
+│  ├─ sheet_reader.py
+│  ├─ normalize_hs.py
+│  ├─ normalize_tariff.py
+│  ├─ vocabulary.py
+│  ├─ matcher.py
+│  ├─ excel_writer.py
+│  └─ logger.py
+├─ tests/
+│  ├─ fixtures/        # サンプル PDF / Excel
+│  ├─ test_normalize_hs.py
+│  ├─ test_normalize_tariff.py
+│  ├─ test_vocabulary.py
+│  ├─ test_matcher.py
+│  └─ test_*_reader.py
+├─ inputs/             # 案件ファイル（.gitignore）
+├─ outputs/            # 中間Excel（.gitignore）
+├─ logs/               # ログ（.gitignore）
+├─ secrets/            # service_account.json（.gitignore 必須）
+├─ config.yaml
+├─ vocabulary.yaml
+├─ requirements.txt
+├─ .gitignore
+└─ README.md
+</code></pre>
+    </section>
+
+    <section id="section-14">
+      <h2>14. UI影響セクション</h2>
+      <p class="callout"><strong>UI変更なし</strong></p>
+      <p>本作業は CLI スクリプト（Pythonローカル実行）であり、ブラウザ等で操作する UI（画面）は持たない。<code>docs/ui-specification.html</code> への影響はない。</p>
+      <ul>
+        <li>ユーザーとの接点はターミナルのコマンド実行とコンソール出力のみ。</li>
+        <li>出力物は Excel ファイルだが、これはデータ成果物であり「画面」ではない。</li>
+        <li>Phase 2（粗利表AJ列への自動書き込み）でも引き続き UI は持たない予定。GUI化は別ステアリングで起こす。</li>
+      </ul>
+    </section>
+
+    <section id="section-15">
+      <h2>15. テスト方針</h2>
+      <ul>
+        <li><strong>ユニットテスト</strong>: <code>normalize_hs</code> / <code>normalize_tariff</code> / <code>vocabulary</code> / <code>matcher</code> / 各 reader の純粋関数部分。pytest。</li>
+        <li><strong>フィクスチャ</strong>: <code>tests/fixtures/</code> に実サンプルの最小セット（許可証PDF 1件・PL 1件・PO 1件）を配置。</li>
+        <li><strong>結合テスト</strong>: フィクスチャ一式で <code>main</code> を実行し、3シートの内容を期待値と比較。</li>
+        <li><strong>Sheets部分</strong>: 本物のAPIは叩かず、<code>sheet_reader</code> をモックして DataFrame を直接返す形でテスト。</li>
+        <li><strong>ケース網羅</strong>: マッチ成功 / POに品番なし / PLにItem/Quality該当なし / Set up展開でHS一致 / Set up展開でHS不一致 / 許可証に該当HSコードなし / 複数ヒット の各ケース。</li>
+      </ul>
+    </section>
+
+    <section id="section-16">
+      <h2>16. 既知の未決事項</h2>
+      <table>
+        <thead>
+          <tr><th>#</th><th>項目</th><th>状況</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>1</td><td>許可証PDFの実レイアウト確認</td><td>✅ 解決（16欄サンプルでテーブル抽出 + 正規表現の併用方針に確定）</td></tr>
+          <tr><td>2</td><td>PO と PL の表記差の度合い</td><td>✅ 解決（語彙辞書 + 部分一致AND で対応）</td></tr>
+          <tr><td>3</td><td>粗利表のシート構造</td><td>✅ 解決（C列=品番、AJ列=数式、3行目以降）</td></tr>
+          <tr><td>4</td><td>サービスアカウント発行・粗利表への共有</td><td>⏳ 未着手（実装着手前の T0-05 / T0-06）</td></tr>
+          <tr><td>5</td><td>HS正規化の桁数（6 vs 9）</td><td>⏳ 既定6桁。実測で再評価（R-07）</td></tr>
+          <tr><td>6</td><td>関税率 S/G プレフィックスの正確な意味</td><td>⏳ 業務確認後に証跡シートへ注記（R-09）</td></tr>
+          <tr><td>7</td><td>PL素材サイレントケースの実頻度</td><td>⏳ 案件追加で実測（R-08）</td></tr>
+          <tr><td>8</td><td>マッチ率90%目標の妥当性</td><td>⏳ 初回1〜2案件で実測後に再評価</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+  </main>
+
+  <footer class="doc-footer">
+    <a class="back-link" href="../../docs/index.html">← ドキュメントトップへ戻る</a>
+  </footer>
+
+</body>
+</html>

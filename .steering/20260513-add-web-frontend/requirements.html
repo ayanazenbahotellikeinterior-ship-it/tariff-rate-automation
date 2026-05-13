@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>要求定義書 — Webフロントエンド追加</title>
+  <link rel="stylesheet" href="../../docs/assets/design-system.css">
+</head>
+<body>
+
+  <header class="doc-header">
+    <a class="back-link" href="../../docs/index.html">← ドキュメントトップへ戻る</a>
+    <nav aria-label="パンくず" class="breadcrumb">
+      <ol>
+        <li><a href="../../docs/index.html">docs</a></li>
+        <li><a href="../">.steering</a></li>
+        <li>20260513-add-web-frontend</li>
+        <li aria-current="page">requirements.html</li>
+      </ol>
+    </nav>
+    <h1>要求定義書 — Webフロントエンド追加</h1>
+    <p class="doc-meta">ドキュメントID: REQ-20260513-002 / 最終更新: 2026-05-13 / バージョン: 0.1（ドラフト）/ 関連: <a href="../20260513-tariff-rate-automation/requirements.html">CLI 版 requirements</a></p>
+  </header>
+
+  <details class="toc" open>
+    <summary>目次</summary>
+    <nav aria-label="目次">
+      <ol>
+        <li><a href="#section-1">1. 背景と目的</a></li>
+        <li><a href="#section-2">2. 対象ユーザー</a></li>
+        <li><a href="#section-3">3. ゴール範囲（スコープ）</a></li>
+        <li><a href="#section-4">4. システム構成（高位）</a></li>
+        <li><a href="#section-5">5. 入力（Input）</a></li>
+        <li><a href="#section-6">6. 出力（Output）</a></li>
+        <li><a href="#section-7">7. ユーザーストーリー</a></li>
+        <li><a href="#section-8">8. 機能要件（FR）</a></li>
+        <li><a href="#section-9">9. 非機能要件（NFR）</a></li>
+        <li><a href="#section-10">10. 受け入れ条件</a></li>
+        <li><a href="#section-11">11. スコープ外（やらないこと）</a></li>
+        <li><a href="#section-12">12. 制約・前提</a></li>
+        <li><a href="#section-13">13. UI影響セクション</a></li>
+        <li><a href="#section-14">14. リスク・未確定事項</a></li>
+      </ol>
+    </nav>
+  </details>
+
+  <main>
+
+    <section id="section-1">
+      <h2>1. 背景と目的</h2>
+      <h3>1.1 背景</h3>
+      <ul>
+        <li>既存の <a href="../20260513-tariff-rate-automation/requirements.html">関税率自動化 CLI</a>（Pythonローカル実行）は個人の手元では動くが、<strong>他のチームメンバーにも使ってほしい</strong>。</li>
+        <li>非エンジニアのメンバーがターミナルでコマンドを打つのは現実的でない。</li>
+        <li>各メンバーが個別に Python 環境を整備するのは保守負担が大きい。</li>
+      </ul>
+
+      <h3>1.2 目的</h3>
+      <p>
+        既存 CLI を <strong>バックエンド（Python モジュール）として再利用</strong> し、ブラウザから操作できる Web フロントエンドを追加する。
+        チームメンバーが <strong>ブラウザでファイルをアップロード → 結果を画面で確認 → 中間Excelをダウンロード</strong> できる状態を目指す。
+      </p>
+    </section>
+
+    <section id="section-2">
+      <h2>2. 対象ユーザー</h2>
+      <table>
+        <thead>
+          <tr><th>属性</th><th>内容</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>主たるユーザー</td><td>輸入案件を担当する自分 + 同チームのメンバー（複数人）</td></tr>
+          <tr><td>利用シーン</td><td>輸入案件のたび。各自が担当案件の関税率を確認するために実行</td></tr>
+          <tr><td>デバイス</td><td>PC ブラウザ（Chrome / Edge / Safari 最新版）。スマホは対象外</td></tr>
+          <tr><td>技術リテラシ</td><td>ブラウザを日常的に使える。ターミナル・Pythonは使わない前提</td></tr>
+          <tr><td>非ターゲット</td><td>社外関係者・取引先</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="section-3">
+      <h2>3. ゴール範囲（スコープ）</h2>
+      <h3>3.1 含める（IN）</h3>
+      <ul>
+        <li>FastAPI ベースの Web サーバ（バックエンドAPI）</li>
+        <li>Google OAuth によるユーザー認証（ドメイン制限可能）</li>
+        <li>3ファイル（許可証PDF / PL / PO）の <strong>ブラウザからのアップロード</strong></li>
+        <li>処理ジョブの非同期実行（アップロード後すぐにレスポンス、結果は後追い）</li>
+        <li>処理結果（中間Excel）の <strong>ブラウザ上プレビュー</strong> と <strong>ダウンロード</strong></li>
+        <li>処理履歴の表示（ユーザーごと）</li>
+        <li>既存 CLI モジュール（reader / matcher / writer 等）の <strong>そのまま再利用</strong></li>
+        <li>ホスティング非依存のアーキテクチャ（ローカル / 社内サーバ / クラウドのいずれにも置けるよう設計）</li>
+      </ul>
+
+      <h3>3.2 含めない（OUT）</h3>
+      <ul>
+        <li>スマートフォン向け UI（PC ブラウザのみ最適化）</li>
+        <li>粗利表AJ列への自動書き込み（Phase 2 — 別ステアリングで起こす）</li>
+        <li>細粒度のユーザー権限管理（管理者・一般等の役割分離）。ログインユーザーは全機能利用可</li>
+        <li>処理結果のクラウド永続化・長期アーカイブ（既定: 30日で自動削除）</li>
+        <li>多言語化（日本語のみ）</li>
+        <li>Web ベースでの設定ファイル編集 GUI（<code>config.yaml</code> / <code>vocabulary.yaml</code> はサーバ管理者が手で更新）</li>
+      </ul>
+    </section>
+
+    <section id="section-4">
+      <h2>4. システム構成（高位）</h2>
+      <figure>
+        <svg viewBox="0 0 720 320" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="システム構成図">
+          <title>Web化システム構成</title>
+          <defs>
+            <marker id="arrW" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+              <path d="M0,0 L10,5 L0,10 z" fill="#4338ca"/>
+            </marker>
+          </defs>
+
+          <g font-family="sans-serif" font-size="12" fill="#0f172a">
+            <rect x="20" y="60" width="160" height="80" rx="8" fill="#eef2ff" stroke="#4338ca"/>
+            <text x="100" y="90" text-anchor="middle">ブラウザ</text>
+            <text x="100" y="110" text-anchor="middle" fill="#475569">チームメンバー</text>
+            <text x="100" y="126" text-anchor="middle" fill="#475569">PC（Chrome/Edge）</text>
+
+            <rect x="260" y="20" width="200" height="60" rx="8" fill="#dcfce7" stroke="#15803d"/>
+            <text x="360" y="45" text-anchor="middle">Google OAuth</text>
+            <text x="360" y="62" text-anchor="middle" fill="#15803d">認証</text>
+
+            <rect x="260" y="120" width="200" height="160" rx="8" fill="#fef9c3" stroke="#a16207"/>
+            <text x="360" y="150" text-anchor="middle" font-weight="bold">FastAPI サーバ</text>
+            <text x="360" y="170" text-anchor="middle" fill="#475569">エンドポイント:</text>
+            <text x="360" y="186" text-anchor="middle" fill="#475569">・/upload</text>
+            <text x="360" y="202" text-anchor="middle" fill="#475569">・/jobs/{id}/status</text>
+            <text x="360" y="218" text-anchor="middle" fill="#475569">・/jobs/{id}/result</text>
+            <text x="360" y="234" text-anchor="middle" fill="#475569">・/jobs/{id}/download</text>
+            <text x="360" y="250" text-anchor="middle" fill="#475569">・/history</text>
+            <text x="360" y="266" text-anchor="middle" fill="#475569">ジョブキュー（非同期）</text>
+
+            <rect x="540" y="120" width="160" height="80" rx="8" fill="#fde2e2" stroke="#b91c1c"/>
+            <text x="620" y="150" text-anchor="middle">既存 CLI モジュール</text>
+            <text x="620" y="170" text-anchor="middle" fill="#475569">readers / normalize</text>
+            <text x="620" y="186" text-anchor="middle" fill="#475569">matcher / writer</text>
+
+            <rect x="540" y="220" width="160" height="60" rx="8" fill="#e0e7ff" stroke="#4338ca"/>
+            <text x="620" y="245" text-anchor="middle">Google Sheets API</text>
+            <text x="620" y="262" text-anchor="middle" fill="#475569">粗利表（閲覧）</text>
+          </g>
+
+          <g stroke="#4338ca" stroke-width="1.5" fill="none">
+            <line x1="180" y1="80"  x2="260" y2="50" marker-end="url(#arrW)"/>
+            <line x1="180" y1="120" x2="260" y2="160" marker-end="url(#arrW)"/>
+            <line x1="460" y1="160" x2="540" y2="160" marker-end="url(#arrW)"/>
+            <line x1="460" y1="240" x2="540" y2="250" marker-end="url(#arrW)"/>
+          </g>
+        </svg>
+        <figcaption>図 1. システム構成の高位図</figcaption>
+      </figure>
+    </section>
+
+    <section id="section-5">
+      <h2>5. 入力（Input）</h2>
+      <p>CLI 版と同じ3ファイル + 粗利表（Sheets）+ 認証情報。</p>
+      <table>
+        <thead>
+          <tr><th>種類</th><th>取得方法</th><th>備考</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>輸入許可証 PDF</td><td>ブラウザからアップロード</td><td>1ファイル/案件・最大10MB</td></tr>
+          <tr><td>PL Excel</td><td>ブラウザからアップロード</td><td>1ファイル/案件・最大10MB</td></tr>
+          <tr><td>PO PDF/Excel</td><td>ブラウザからアップロード</td><td>1ファイル/案件・最大10MB</td></tr>
+          <tr><td>粗利表（スプレッドシート）</td><td>サーバが Sheets API（閲覧権限）で取得</td><td>シートIDは設定 or UIで指定</td></tr>
+          <tr><td>ログイン情報</td><td>Google OAuth リダイレクトフロー</td><td>許可ドメイン制限あり</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="section-6">
+      <h2>6. 出力（Output）</h2>
+      <ul>
+        <li><strong>ブラウザ上のプレビュー</strong>: 中間Excel「結果」シートを HTML テーブルとして表示（成功品番・関税率・未マッチ理由が一目で分かる）</li>
+        <li><strong>中間Excelダウンロード</strong>: 3シート構成のxlsxファイル（CLI版と同じ仕様）</li>
+        <li><strong>処理サマリ</strong>: 画面上に件数・マッチ率・実行時間を表示</li>
+        <li><strong>処理履歴</strong>: ユーザーごとの過去ジョブ一覧（実行日時・対象品番数・成功率・ダウンロードリンク）</li>
+      </ul>
+    </section>
+
+    <section id="section-7">
+      <h2>7. ユーザーストーリー</h2>
+      <table>
+        <thead>
+          <tr><th>ID</th><th>ストーリー</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>US-01</td><td>チームメンバーとして、Googleアカウントでログインして自分の案件を処理したい。アカウント発行の手間を省きたい。</td></tr>
+          <tr><td>US-02</td><td>チームメンバーとして、3ファイルをドラッグ＆ドロップで指定して「実行」ボタンを押すだけで処理したい。コマンド入力したくないから。</td></tr>
+          <tr><td>US-03</td><td>チームメンバーとして、処理結果を画面上で確認し、必要なら Excel をダウンロードしたい。毎回ダウンロードしなくても大筋を把握したいから。</td></tr>
+          <tr><td>US-04</td><td>チームメンバーとして、過去自分が処理した案件の履歴を見返したい。同じ案件を二重処理しないため。</td></tr>
+          <tr><td>US-05</td><td>チームメンバーとして、未マッチ理由が画面上で見えるようにしてほしい。Excelを開かなくても判断したいから。</td></tr>
+          <tr><td>US-06</td><td>チームメンバーとして、処理に時間がかかる場合は進行状況（ジョブ状態）を見たい。固まっているのか動いているのか分かるように。</td></tr>
+          <tr><td>US-07</td><td>運用者として、社外ドメインのGoogleアカウントではログインできないようにしたい。情報漏洩を防ぐため。</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="section-8">
+      <h2>8. 機能要件（FR）</h2>
+      <table>
+        <thead>
+          <tr><th>ID</th><th>要件</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>FR-W01</td><td>Google OAuth でユーザー認証ができる</td></tr>
+          <tr><td>FR-W02</td><td>許可ドメインリスト（YAML設定）に含まれないGoogleアカウントは拒否できる</td></tr>
+          <tr><td>FR-W03</td><td>未ログイン状態でAPIエンドポイント・画面にアクセスするとログイン画面にリダイレクトされる</td></tr>
+          <tr><td>FR-W04</td><td>3ファイル（許可証PDF / PL / PO）をブラウザからアップロードできる（ドラッグ&ドロップ + クリック選択）</td></tr>
+          <tr><td>FR-W05</td><td>アップロードファイルの形式（拡張子・サイズ）を検証し、不正なら明示的なエラーメッセージを返す</td></tr>
+          <tr><td>FR-W06</td><td>「実行」ボタン押下で処理ジョブを非同期に開始し、ジョブIDを即座に返す</td></tr>
+          <tr><td>FR-W07</td><td>ジョブの状態（pending / running / completed / failed）を確認できる</td></tr>
+          <tr><td>FR-W08</td><td>処理が完了したら、画面上で結果（成功品番リスト・未マッチ品番リスト・サマリ）を表示できる</td></tr>
+          <tr><td>FR-W09</td><td>中間Excel（3シート構成）をブラウザからダウンロードできる</td></tr>
+          <tr><td>FR-W10</td><td>ユーザーごとの処理履歴を一覧表示できる（過去30日分）</td></tr>
+          <tr><td>FR-W11</td><td>30日経過した結果ファイルは自動的にサーバから削除される</td></tr>
+          <tr><td>FR-W12</td><td>処理中・処理完了・処理失敗の状態がブラウザ上で視覚的に区別できる（ステータスバッジ等）</td></tr>
+          <tr><td>FR-W13</td><td>処理ログ（既存CLIモジュールが吐くログ）はサーバ側に保存され、ユーザーは閲覧不可（管理者のみ）</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="section-9">
+      <h2>9. 非機能要件（NFR）</h2>
+      <table>
+        <thead>
+          <tr><th>ID</th><th>分類</th><th>要件</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>NFR-W01</td><td>パフォーマンス</td><td>アップロード〜画面上の結果表示まで <strong>5分以内</strong>（1案件、許可証16欄規模）</td></tr>
+          <tr><td>NFR-W02</td><td>同時実行</td><td>同時に最大 <strong>5ジョブ</strong> まで並行処理可能</td></tr>
+          <tr><td>NFR-W03</td><td>可用性</td><td>営業時間内（平日9-18時）の稼働率 99% 以上を目標</td></tr>
+          <tr><td>NFR-W04</td><td>セキュリティ</td><td>HTTPS 必須。アップロードファイルはユーザー間で漏洩しない（ジョブIDで隔離）</td></tr>
+          <tr><td>NFR-W05</td><td>機密保持</td><td>アップロードファイル・結果ファイルは <strong>サーバ上で暗号化（at-rest）</strong> または短期間で削除</td></tr>
+          <tr><td>NFR-W06</td><td>互換性</td><td>Chrome / Edge / Safari の最新2バージョンで動作</td></tr>
+          <tr><td>NFR-W07</td><td>レスポンシブ</td><td>PCブラウザ幅 1280px / 1920px で表示崩れなし。スマホは対象外</td></tr>
+          <tr><td>NFR-W08</td><td>アクセシビリティ</td><td>WCAG 2.1 AA 準拠（キーボード操作・コントラスト比 4.5:1 以上）</td></tr>
+          <tr><td>NFR-W09</td><td>移植性</td><td>Docker コンテナで動作。ローカル/社内サーバ/クラウドのいずれにもデプロイ可能</td></tr>
+          <tr><td>NFR-W10</td><td>保守性</td><td>既存 CLI モジュールは <strong>変更なし</strong> で再利用（Web 層は CLI の薄いラッパー）</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="section-10">
+      <h2>10. 受け入れ条件</h2>
+      <ol>
+        <li>許可されたGoogleアカウントでログインでき、許可外ドメインは拒否される。</li>
+        <li>3ファイルをドラッグ&ドロップでアップロード→「実行」→ 結果が画面に表示される。</li>
+        <li>結果画面で成功品番の関税率・未マッチ品番の理由が一覧で確認できる。</li>
+        <li>中間Excel（3シート）がダウンロードでき、CLI 版と同等の内容である。</li>
+        <li>過去ジョブの履歴が表示され、再ダウンロード可能（30日以内）。</li>
+        <li>1案件の処理が5分以内に完了する（許可証16欄規模）。</li>
+        <li>HTTPS で通信し、ログインなしの直接アクセスはリダイレクトされる。</li>
+        <li>Docker で起動でき、ローカル・社内サーバ・クラウドいずれにもデプロイできる構成。</li>
+      </ol>
+    </section>
+
+    <section id="section-11">
+      <h2>11. スコープ外（やらないこと）</h2>
+      <ul>
+        <li>スマートフォン向け UI（PCブラウザのみ）</li>
+        <li>粗利表AJ列への自動書き込み（別 Phase）</li>
+        <li>管理者ダッシュボード・権限管理（ログインユーザーは全員同権限）</li>
+        <li>結果の長期アーカイブ（30日で自動削除）</li>
+        <li>多言語化</li>
+        <li>YAML設定のWeb編集 GUI</li>
+        <li>Webhook・通知（Slack/Email等）</li>
+      </ul>
+    </section>
+
+    <section id="section-12">
+      <h2>12. 制約・前提</h2>
+      <ul>
+        <li>バックエンドは <a href="../20260513-tariff-rate-automation/">既存 CLI 設計</a> を <strong>そのまま再利用</strong>（変更しない）。</li>
+        <li>Web フレームワーク: <strong>FastAPI</strong>。</li>
+        <li>認証: <strong>Google OAuth 2.0</strong>（許可ドメイン制限）。</li>
+        <li>ホスティング先は未確定。<strong>Docker コンテナで完結</strong> させて移植性を確保。</li>
+        <li>Python 3.11 以上。</li>
+        <li>初期リリースは少人数（5名以下）想定。</li>
+      </ul>
+    </section>
+
+    <section id="section-13">
+      <h2>13. UI影響セクション</h2>
+      <p><strong>UI変更あり</strong>（新規UI作成）</p>
+      <p>本ステアリングは Web フロントエンドの新規追加であり、UI 全体が新規。詳細は <a href="../../docs/ui-specification.html">docs/ui-specification.html</a> で定義する（同時並行で作成）。</p>
+
+      <h3>13.1 想定画面（暫定）</h3>
+      <table>
+        <thead>
+          <tr><th>画面ID</th><th>画面名</th><th>目的</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>SCR-001-login</td><td>ログイン画面</td><td>Google OAuth でログイン</td></tr>
+          <tr><td>SCR-002-upload</td><td>アップロード画面</td><td>3ファイルを指定して「実行」</td></tr>
+          <tr><td>SCR-003-processing</td><td>処理中画面</td><td>ジョブステータスを表示</td></tr>
+          <tr><td>SCR-004-result</td><td>結果画面</td><td>成功品番・未マッチ品番・サマリの表示、Excelダウンロード</td></tr>
+          <tr><td>SCR-005-history</td><td>履歴画面</td><td>過去ジョブ一覧・再ダウンロード</td></tr>
+          <tr><td>SCR-006-error</td><td>エラー画面</td><td>処理失敗・認証拒否時の表示</td></tr>
+        </tbody>
+      </table>
+      <p class="doc-meta">ワイヤフレーム・状態定義・遷移図は <code>docs/ui-specification.html</code> に記載予定。</p>
+
+      <h3>13.2 ui-specification.html での記載必須項目</h3>
+      <ul>
+        <li>画面一覧（上記の確定版）</li>
+        <li>ユーザーフロー / 画面遷移図</li>
+        <li>各画面のワイヤフレーム（PC、SVG）</li>
+        <li>UI要素一覧（要素名・型・役割・バリデーション・必須/任意）</li>
+        <li>状態定義（空・読込中・エラー・成功・大画面/中画面）</li>
+        <li>操作とイベント（ボタン・リンクごとに表形式）</li>
+        <li>アクセシビリティ（WCAG 2.1 AA）</li>
+        <li>共通コンポーネント（ボタン・フォーム・モーダル・トースト）</li>
+        <li>デザイントークン（色・タイポ・スペーシング）</li>
+      </ul>
+    </section>
+
+    <section id="section-14">
+      <h2>14. リスク・未確定事項</h2>
+      <table>
+        <thead>
+          <tr><th>#</th><th>項目</th><th>影響</th><th>対応方針</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>RW-01</td>
+            <td>ホスティング先未確定</td>
+            <td>初期コスト・運用負荷の見積もり不能</td>
+            <td>Docker完結で設計し、デプロイ先は <a href="../../docs/architecture.html">architecture.html</a> で複数候補を比較</td>
+          </tr>
+          <tr>
+            <td>RW-02</td>
+            <td>機密ファイルのサーバ保持</td>
+            <td>情報漏洩リスク</td>
+            <td>30日自動削除・at-rest暗号化・ユーザー間隔離（ジョブID）</td>
+          </tr>
+          <tr>
+            <td>RW-03</td>
+            <td>Google OAuth クライアントID/シークレットの管理</td>
+            <td>シークレット漏洩時のリスク</td>
+            <td>環境変数で注入・<code>secrets/</code> に同梱しない</td>
+          </tr>
+          <tr>
+            <td>RW-04</td>
+            <td>Sheets API の編集権限（Phase 2 で必要）への移行</td>
+            <td>権限拡大時の同意フローが変わる</td>
+            <td>本 Phase は閲覧権限のみ。Phase 2 で再同意を取得する設計に</td>
+          </tr>
+          <tr>
+            <td>RW-05</td>
+            <td>長時間ジョブ（許可証20欄超）のタイムアウト</td>
+            <td>処理失敗の頻発</td>
+            <td>非同期ジョブキュー設計でタイムアウト緩和。進行状況表示で UX 確保</td>
+          </tr>
+          <tr>
+            <td>RW-06</td>
+            <td>ファイルアップロード時の進捗バー</td>
+            <td>大容量ファイル時の UX</td>
+            <td>FastAPI のチャンク受信 + フロント側で進捗表示</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+  </main>
+
+  <footer class="doc-footer">
+    <a class="back-link" href="../../docs/index.html">← ドキュメントトップへ戻る</a>
+  </footer>
+
+</body>
+</html>

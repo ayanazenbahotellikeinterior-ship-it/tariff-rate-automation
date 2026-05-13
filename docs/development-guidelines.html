@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>開発ガイドライン — 粗利表 関税率更新の自動化</title>
+  <link rel="stylesheet" href="assets/design-system.css">
+</head>
+<body>
+
+  <header class="doc-header">
+    <a class="back-link" href="index.html">← 戻る</a>
+    <h1>開発ガイドライン</h1>
+    <p class="doc-meta">ドキュメントID: DEV-001 / 最終更新: 2026-05-13 / バージョン: 0.1（ドラフト）</p>
+  </header>
+
+  <details class="toc" open>
+    <summary>目次</summary>
+    <nav aria-label="目次">
+      <ol>
+        <li><a href="#section-1">1. 言語・ランタイム</a></li>
+        <li><a href="#section-2">2. プロジェクト構成</a></li>
+        <li><a href="#section-3">3. コーディング規約（Python）</a></li>
+        <li><a href="#section-4">4. 命名規則</a></li>
+        <li><a href="#section-5">5. エラーハンドリング</a></li>
+        <li><a href="#section-6">6. ログ出力</a></li>
+        <li><a href="#section-7">7. 設定ファイル</a></li>
+        <li><a href="#section-8">8. テスト</a></li>
+        <li><a href="#section-9">9. 依存ライブラリ管理</a></li>
+        <li><a href="#section-10">10. Git 規約</a></li>
+        <li><a href="#section-11">11. セキュリティ・シークレット管理</a></li>
+        <li><a href="#section-12">12. ドキュメント運用</a></li>
+      </ol>
+    </nav>
+  </details>
+
+  <main>
+
+    <section id="section-1">
+      <h2>1. 言語・ランタイム</h2>
+      <ul>
+        <li><strong>Python 3.11 以上</strong>（型ヒント・dataclass・<code>match</code> 文を活用）</li>
+        <li>OS: Windows 10/11（業務PC環境）。WSL は使わずネイティブ実行を前提とする。</li>
+        <li>仮想環境は <code>venv</code> を使用（<code>.venv/</code> をプロジェクト直下に配置）。</li>
+      </ul>
+    </section>
+
+    <section id="section-2">
+      <h2>2. プロジェクト構成</h2>
+      <p>詳細は <a href="../.steering/20260513-tariff-rate-automation/design.html#section-13">.steering/.../design.html 第13節</a> を参照。要点は以下：</p>
+      <pre><code>tariff-rate-automation/
+├─ src/          # 実装コード（モジュールごとに分割）
+├─ tests/        # pytest テスト + fixtures
+├─ inputs/       # 案件ファイル投入先（.gitignore）
+├─ outputs/      # 中間Excel出力（.gitignore）
+├─ logs/         # 実行ログ（.gitignore）
+├─ secrets/      # service_account.json（.gitignore 必須）
+├─ config.yaml
+├─ vocabulary.yaml
+├─ requirements.txt
+└─ README.md</code></pre>
+      <ul>
+        <li>1モジュール = 1責務。reader / normalize / matcher / writer を分離。</li>
+        <li>純粋関数は <code>normalize_*.py</code> / <code>vocabulary.py</code> / <code>matcher.py</code> に集約。</li>
+      </ul>
+    </section>
+
+    <section id="section-3">
+      <h2>3. コーディング規約（Python）</h2>
+
+      <h3>3.1 スタイル</h3>
+      <ul>
+        <li><strong>PEP 8</strong> 準拠。フォーマッタは <code>black</code>（line-length 100）。</li>
+        <li>インポート整理は <code>isort</code>（プロファイル <code>black</code>）。</li>
+        <li>静的解析は <code>ruff</code>（既定ルール + <code>E</code> <code>F</code> <code>W</code> <code>I</code> <code>B</code> <code>UP</code>）。</li>
+      </ul>
+
+      <h3>3.2 型ヒント</h3>
+      <ul>
+        <li>公開関数・メソッドは <strong>必ず型ヒントを書く</strong>。</li>
+        <li>戻り値が複数値なら <code>tuple[X, Y]</code> または <code>dataclass</code>。生の辞書を返さない。</li>
+        <li>外部I/O境界（YAML読込・PDF抽出など）では <code>dataclass</code> または <code>TypedDict</code> で型を明示。</li>
+      </ul>
+
+      <h3>3.3 コメント</h3>
+      <ul>
+        <li>「何をしているか」ではなく「なぜそうしているか」を書く。コードが自明な処理にはコメント不要。</li>
+        <li>業務知識（HSコードの桁構造、許可証PDFの欄区切り規則 等）は docstring に簡潔に書く。</li>
+      </ul>
+
+      <h3>3.4 関数設計</h3>
+      <ul>
+        <li>純粋関数を優先（同じ入力 → 同じ出力、副作用なし）。</li>
+        <li>1関数の行数目安は <strong>50行以内</strong>。超える場合は分割を検討。</li>
+        <li>I/O とロジックを混ぜない（reader は読むだけ・matcher は突合だけ）。</li>
+      </ul>
+    </section>
+
+    <section id="section-4">
+      <h2>4. 命名規則</h2>
+      <table>
+        <thead>
+          <tr><th>対象</th><th>規則</th><th>例</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>モジュール / ファイル</td><td>snake_case</td><td><code>permit_pdf_reader.py</code>, <code>normalize_hs.py</code></td></tr>
+          <tr><td>関数 / 変数</td><td>snake_case</td><td><code>normalize_tariff()</code>, <code>match_tokens</code></td></tr>
+          <tr><td>クラス / dataclass</td><td>PascalCase</td><td><code>PermitEntry</code>, <code>Config</code></td></tr>
+          <tr><td>定数</td><td>UPPER_SNAKE_CASE</td><td><code>DEFAULT_HS_DEPTH = 6</code></td></tr>
+          <tr><td>業務用語</td><td>原則 英語。日本語限定は変数名で日本語を使ってもよい</td><td><code>hinban</code>, <code>hs_key</code>, <code>tariff_rate</code></td></tr>
+          <tr><td>DataFrame 列名</td><td>snake_case の英語</td><td><code>hs_key</code>, <code>match_tokens</code></td></tr>
+          <tr><td>テスト関数</td><td><code>test_*</code> の snake_case</td><td><code>test_normalize_hs_with_dot_separator()</code></td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="section-5">
+      <h2>5. エラーハンドリング</h2>
+      <ul>
+        <li>業務的に「想定内の失敗」（未マッチ等）は <strong>例外で止めず、結果データとして記録</strong>。</li>
+        <li>システム的に「続行不可」（設定ファイル不正・認証失敗・必須ファイル欠如）は <strong>明確なメッセージで即終了</strong>（非ゼロ exit）。</li>
+        <li>例外を握りつぶさない。<code>except Exception: pass</code> は禁止。</li>
+        <li>ライブラリ固有の例外は、業務的な意味のある例外に <code>raise ... from e</code> でラップする。</li>
+      </ul>
+    </section>
+
+    <section id="section-6">
+      <h2>6. ログ出力</h2>
+      <ul>
+        <li>標準ライブラリ <code>logging</code> を使用。<code>print()</code> はコンソール出力（サマリ表示）に限定。</li>
+        <li>ログレベル:
+          <ul>
+            <li><code>DEBUG</code>: 内部処理の詳細（行ごとの突合結果等）</li>
+            <li><code>INFO</code>: 処理の節目（ファイル読込開始/完了、件数）</li>
+            <li><code>WARNING</code>: 想定外だが続行可能（複数候補ヒット、レイアウト揺れ）</li>
+            <li><code>ERROR</code>: 続行不可（認証失敗、ファイル欠如）</li>
+          </ul>
+        </li>
+        <li>ログファイルは <code>./logs/run_YYYYMMDD_HHmm.log</code> に出力。</li>
+        <li>機密情報（取引先名・金額）はログに出さない。</li>
+      </ul>
+    </section>
+
+    <section id="section-7">
+      <h2>7. 設定ファイル</h2>
+      <ul>
+        <li>設定は <strong>YAML</strong>（<code>config.yaml</code> / <code>vocabulary.yaml</code>）。コードに値をハードコーディングしない。</li>
+        <li>パスはすべて <strong>相対パス</strong>（プロジェクトルート基準）。</li>
+        <li>設定読込時に必須項目をチェックし、欠如時は分かりやすいメッセージで終了。</li>
+        <li>環境依存値（APIキー・サービスアカウントパス等）は設定ファイル中で <strong>相対パス参照のみ</strong>、実物は <code>./secrets/</code> に置く（コミットしない）。</li>
+      </ul>
+    </section>
+
+    <section id="section-8">
+      <h2>8. テスト</h2>
+
+      <h3>8.1 テストフレームワーク</h3>
+      <ul>
+        <li><strong>pytest</strong> を使用。<code>tests/</code> 配下に <code>test_*.py</code> として配置。</li>
+        <li>カバレッジ計測は任意（必要に応じて <code>pytest-cov</code>）。</li>
+      </ul>
+
+      <h3>8.2 テストの分類</h3>
+      <table>
+        <thead>
+          <tr><th>分類</th><th>対象</th><th>原則</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>ユニットテスト</td><td>純粋関数（normalize_* / vocabulary / matcher 内ロジック）</td><td>外部I/Oを叩かない。モック・フィクスチャを使用。</td></tr>
+          <tr><td>reader テスト</td><td>各 reader モジュール</td><td><code>tests/fixtures/</code> の実サンプル（最小版）で実行。</td></tr>
+          <tr><td>結合テスト</td><td><code>main</code> 全体</td><td>サンプル一式で実行し、出力Excelの3シート内容を期待値と比較。</td></tr>
+        </tbody>
+      </table>
+
+      <h3>8.3 Sheets API のテスト</h3>
+      <ul>
+        <li>本物の Sheets API は叩かない。<code>sheet_reader</code> をモックして DataFrame を直接返す。</li>
+        <li>認証エラー・権限エラーの挙動はモック側で再現する。</li>
+      </ul>
+
+      <h3>8.4 フィクスチャ管理</h3>
+      <ul>
+        <li><code>tests/fixtures/</code> には <strong>機密情報を含まない最小サンプル</strong> を配置。</li>
+        <li>取引先名・金額が含まれる実データはコミットせず、<code>./inputs/</code> に置いて <code>.gitignore</code> 対象とする。</li>
+      </ul>
+    </section>
+
+    <section id="section-9">
+      <h2>9. 依存ライブラリ管理</h2>
+      <ul>
+        <li>依存は <code>requirements.txt</code> に **バージョンを固定** して記載（<code>pkg==X.Y.Z</code>）。</li>
+        <li>追加時は理由をコミットメッセージ or PR 説明に書く。</li>
+        <li>不要になったライブラリは速やかに削除（依存膨張を防ぐ）。</li>
+        <li>主要ライブラリは <a href="../.steering/20260513-tariff-rate-automation/design.html#section-12">design.html 第12節</a> 参照。</li>
+      </ul>
+    </section>
+
+    <section id="section-10">
+      <h2>10. Git 規約</h2>
+
+      <h3>10.1 ブランチ</h3>
+      <ul>
+        <li>個人運用のため、Git Flow までは必須としない。</li>
+        <li>大きな機能追加・リファクタリングは作業ブランチ <code>feature/&lt;short-name&gt;</code> を切る。</li>
+      </ul>
+
+      <h3>10.2 コミットメッセージ</h3>
+      <ul>
+        <li>1行目（subject）は日本語可・<strong>50文字以内</strong>。</li>
+        <li>変更の意図が分かるよう「何を・なぜ」を書く。</li>
+        <li>大きい変更は本文（body）で詳細を補足。空行を1つ入れて段落分け。</li>
+      </ul>
+      <pre><code>例:
+permit_pdf_reader: 関税率の FREE 表記を 0% へ正規化
+
+許可証PDF の一部の欄が "G FREE" のように記載されており、
+従来の正規表現では数値が取れずに空欄になっていた。
+normalize_tariff で FREE → 0% に変換する処理を追加。</code></pre>
+
+      <h3>10.3 コミット粒度</h3>
+      <ul>
+        <li>「動く状態」を保ったまま小さく切る。</li>
+        <li>機能追加とリファクタリングは別コミット。</li>
+        <li>テスト追加は対象実装と同じコミット または 直後のコミット。</li>
+      </ul>
+
+      <h3>10.4 <code>.gitignore</code></h3>
+      <ul>
+        <li>必須: <code>.venv/</code>, <code>secrets/</code>, <code>inputs/</code>, <code>outputs/</code>, <code>logs/</code>, <code>__pycache__/</code>, <code>*.pyc</code>, <code>.pytest_cache/</code>, <code>~$*</code>（Excel一時ファイル）</li>
+      </ul>
+    </section>
+
+    <section id="section-11">
+      <h2>11. セキュリティ・シークレット管理</h2>
+      <ul>
+        <li><code>service_account.json</code> 等の認証情報は <strong>絶対にコミットしない</strong>。<code>./secrets/</code> 配下に配置し <code>.gitignore</code> で除外。</li>
+        <li>万一コミットしてしまった場合: 即座に該当キーを <strong>無効化・再発行</strong>。git履歴からの除去は <code>git filter-repo</code> 等で行うが、無効化が最優先。</li>
+        <li>機密情報（取引先名・金額・個人情報）はログ・コミットメッセージ・コメントに残さない。</li>
+        <li>サンプルデータをドキュメントに含める場合は **マスク** すること（取引先名→「ABC社」、金額→ダミー値等）。</li>
+      </ul>
+    </section>
+
+    <section id="section-12">
+      <h2>12. ドキュメント運用</h2>
+      <ul>
+        <li>恒久的なドキュメント（プロダクト全体）は <code>docs/</code>、作業単位は <code>.steering/[YYYYMMDD]-[題名]/</code> に置く（<a href="../CLAUDE.md">CLAUDE.md</a> 参照）。</li>
+        <li>HTML は <code>docs/assets/design-system.css</code> を相対参照。新規HTMLは <code>docs/assets/template.html</code> を雛形にする。</li>
+        <li>用語は <a href="glossary.html">glossary.html</a> に集約し、コード上の命名と整合させる。</li>
+        <li>図表は <strong>SVGインライン</strong> または HTML+CSS。外部CDN依存・Mermaid 記法は使わない（オフライン閲覧性のため）。</li>
+        <li>変更があったら関連ドキュメントを同時に更新（コード変更だけで完了させない）。</li>
+      </ul>
+    </section>
+
+  </main>
+
+  <footer class="doc-footer">
+    <a class="back-link" href="index.html">← 戻る</a>
+  </footer>
+
+</body>
+</html>

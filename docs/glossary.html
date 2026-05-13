@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>用語集 — 関税率自動化ツール</title>
+  <link rel="stylesheet" href="assets/design-system.css">
+</head>
+<body>
+
+  <header class="doc-header">
+    <a class="back-link" href="index.html">← 戻る</a>
+    <h1>用語集（ユビキタス言語）</h1>
+    <p class="doc-meta">ドキュメントID: GLOSSARY-001 / 最終更新: 2026-05-13 / バージョン: 0.1（ドラフト）</p>
+  </header>
+
+  <details class="toc" open>
+    <summary>目次</summary>
+    <nav aria-label="目次">
+      <ol>
+        <li><a href="#section-1">1. 業務ドメイン用語（貿易・輸入）</a></li>
+        <li><a href="#section-2">2. 商品・データ構造の用語</a></li>
+        <li><a href="#section-3">3. 突合・処理ロジックの用語</a></li>
+        <li><a href="#section-4">4. UI/UX 用語</a></li>
+        <li><a href="#section-5">5. 技術用語（Web・認証・インフラ）</a></li>
+        <li><a href="#section-6">6. 英日対応表</a></li>
+        <li><a href="#section-7">7. コード上の命名規則</a></li>
+      </ol>
+    </nav>
+  </details>
+
+  <main>
+
+    <section id="section-1">
+      <h2>1. 業務ドメイン用語（貿易・輸入）</h2>
+      <table>
+        <thead>
+          <tr><th>用語</th><th>定義</th><th>例・補足</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>輸入許可証</td>
+            <td>税関が発行する輸入許可通知書。商品ごとの関税率・HSコード・関税額が記載される。本ツールの主要入力。</td>
+            <td>「許可書 IS2611304.pdf」等。1案件で複数欄（最大十数欄）に商品情報が並ぶ。</td>
+          </tr>
+          <tr>
+            <td>関税率</td>
+            <td>輸入時に課される税率。HSコードと原産地に基づき決定される。</td>
+            <td>例: <code>7.4%</code>、<code>FREE</code>（免税）</td>
+          </tr>
+          <tr>
+            <td>HSコード</td>
+            <td>Harmonized System Code。世界共通の関税分類コード。日本では9〜10桁。</td>
+            <td>PL: <code>6208210000</code>（10桁）／許可証: <code>6208.21-000</code>（9桁、区切り付き）</td>
+          </tr>
+          <tr>
+            <td>税表番号</td>
+            <td>許可証PDF上のHSコード上位（4+2桁=6桁）。</td>
+            <td>例: <code>6208.21</code></td>
+          </tr>
+          <tr>
+            <td>品目番号</td>
+            <td>許可証PDF上のHSコード（4+2+3桁=9桁、区切り付き）。</td>
+            <td>例: <code>6208.21-000</code></td>
+          </tr>
+          <tr>
+            <td>欄</td>
+            <td>許可証PDF内の品目申告ブロック。<code>&lt; NN 欄&gt;</code> マーカーで区切られる。</td>
+            <td>1案件で1〜十数欄。各欄1品名と1HSコードを持つ。</td>
+          </tr>
+          <tr>
+            <td>S プレフィックス</td>
+            <td>許可証の関税率に付く区分コード。一般税率（Standard）と推定。</td>
+            <td>例: <code>S 4.5%</code>、<code>S 9%</code>（業務確認の余地あり）</td>
+          </tr>
+          <tr>
+            <td>G プレフィックス</td>
+            <td>許可証の関税率に付く区分コード。協定・特恵税率（GATT/General？）と推定。</td>
+            <td>例: <code>G 7.4%</code>、<code>G FREE</code></td>
+          </tr>
+          <tr>
+            <td>FREE</td>
+            <td>免税。許可証で関税率の代わりに記載される。本ツールでは <code>0%</code> に正規化。</td>
+            <td>—</td>
+          </tr>
+          <tr>
+            <td>原産地</td>
+            <td>許可証PDFに記載される製造国。</td>
+            <td>例: <code>CN-CHINA</code></td>
+          </tr>
+          <tr>
+            <td>CIF価格</td>
+            <td>運賃・保険料込みの輸入価格。許可証PDFに記載。本ツールでは未使用（将来のため記録）。</td>
+            <td>—</td>
+          </tr>
+          <tr>
+            <td>BPR</td>
+            <td>輸入申告価格按分（割合等）に関する許可証内の項目。本ツールでは未使用。</td>
+            <td>—</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="section-2">
+      <h2>2. 商品・データ構造の用語</h2>
+      <table>
+        <thead>
+          <tr><th>用語</th><th>定義</th><th>例</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>品番</td>
+            <td>粗利表およびPOにおける一意な商品識別コード。本ツールの突合チェーンの起点。</td>
+            <td><code>ctstpjlblue</code>、<code>19silkpjslm1navy</code></td>
+          </tr>
+          <tr>
+            <td>Item</td>
+            <td>PO上の商品ライン名または品種を示す列値。</td>
+            <td><code>Cotton twill stripe pajama</code>、<code>bottoms</code>、<code>dress</code></td>
+          </tr>
+          <tr>
+            <td>gender</td>
+            <td>商品の対象性別。POの列値で WOMEN / MEN 等を含む。</td>
+            <td><code>WOMEN</code>、<code>MEN</code></td>
+          </tr>
+          <tr>
+            <td>Quality</td>
+            <td>素材・生地。生地幅・目付を含むこともある。</td>
+            <td><code>100% cotton</code>、<code>100% silk</code>、<code>100% cotton 57/58 110GSM</code></td>
+          </tr>
+          <tr>
+            <td>素材</td>
+            <td>Quality の中核情報。突合キーとして使用。</td>
+            <td><code>100% cotton</code> → トークン <code>COTTON</code></td>
+          </tr>
+          <tr>
+            <td>Set up</td>
+            <td>セット品マーカー。PL では TOPS と PANTS の2行に展開される。</td>
+            <td>PO列値 <code>Set up</code> → PL「WOMEN'S COTTON TWILL STRIPE PAJAMA TOPS + PANTS」</td>
+          </tr>
+          <tr>
+            <td>DESCRIPTION</td>
+            <td>PL上の商品説明文字列。gender + 素材 + 種類を含む（素材は明記されない場合もある）。</td>
+            <td><code>WOMEN'S COTTON TWILL STRIPE PAJAMA TOPS</code></td>
+          </tr>
+          <tr>
+            <td>编号</td>
+            <td>PL内の通番（HLI-001 のような連番）。品番ではない。</td>
+            <td><code>HLI-007</code></td>
+          </tr>
+          <tr>
+            <td>PL</td>
+            <td>Packing List。出荷時の梱包内容明細書。商品ごとの DESCRIPTION と HSコードが記載。</td>
+            <td>—</td>
+          </tr>
+          <tr>
+            <td>PO</td>
+            <td>Purchase Order。発注書。品番・Item・gender・Quality 等が記載。</td>
+            <td>—</td>
+          </tr>
+          <tr>
+            <td>PI</td>
+            <td>Proforma Invoice。仮インボイス。PO と類似の役割。</td>
+            <td>本リリースでは PO と同等に扱う</td>
+          </tr>
+          <tr>
+            <td>SO</td>
+            <td>Sales Order。販売注文書。PO と類似の役割。</td>
+            <td>本リリースでは PO と同等に扱う</td>
+          </tr>
+          <tr>
+            <td>粗利表</td>
+            <td>商品ごとの粗利を管理する Google スプレッドシート。AJ列に関税数式 <code>=PRODUCT(AA*, X%)</code> が入る。</td>
+            <td>C列=品番、AA列=下代、AJ列=関税数式</td>
+          </tr>
+          <tr>
+            <td>下代</td>
+            <td>仕入価格。粗利表のAA列に入る。関税額計算のベース。</td>
+            <td>—</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="section-3">
+      <h2>3. 突合・処理ロジックの用語</h2>
+      <table>
+        <thead>
+          <tr><th>用語</th><th>定義</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>三ホップ突合</td>
+            <td>「品番 → Item/gender/Quality → DESCRIPTION → HSコード → 関税率」の3段階で関税率を引くロジック。</td>
+          </tr>
+          <tr>
+            <td>HS正規化キー</td>
+            <td>HSコードの突合用正規化形式。区切り文字を除去し、頭6桁（業務上の分類粒度）を取り出した文字列。</td>
+          </tr>
+          <tr>
+            <td>match_tokens</td>
+            <td>PO値（gender + 素材 + Item語彙）から導出した突合用トークン。PL の DESCRIPTION に対し部分一致 AND で当てる。</td>
+          </tr>
+          <tr>
+            <td>部分一致 AND</td>
+            <td>突合用トークンが <strong>すべて</strong> DESCRIPTION に含まれる行をヒットとみなす方式。</td>
+          </tr>
+          <tr>
+            <td>語彙辞書（vocabulary）</td>
+            <td>PO 側の Item / gender 語彙を PL 側の DESCRIPTION 語彙に変換するための YAML 辞書。</td>
+          </tr>
+          <tr>
+            <td>Set up展開</td>
+            <td>Set up マーカー付き品番について、PL の TOPS と PANTS の2行を引き、HS一致を確認する処理。</td>
+          </tr>
+          <tr>
+            <td>未マッチ</td>
+            <td>三ホップのいずれかのホップでマッチに失敗した状態。未マッチ理由を出力に記載。</td>
+          </tr>
+          <tr>
+            <td>証跡</td>
+            <td>突合経路の記録。各ホップで何にマッチしたかを保持し、監査・原因究明に使う。</td>
+          </tr>
+          <tr>
+            <td>正規化</td>
+            <td>表記揺れを吸収するための前処理（大文字化・空白除去・区切り除去等）。</td>
+          </tr>
+          <tr>
+            <td>冪等性</td>
+            <td>同じ入力に対して何回処理を実行しても、同じ出力が得られる性質。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="section-4">
+      <h2>4. UI/UX 用語</h2>
+      <table>
+        <thead>
+          <tr><th>用語</th><th>定義</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>ドロップゾーン</td><td>ファイルをドラッグ&ドロップで投入できる領域。クリックでファイル選択ダイアログも開く。</td></tr>
+          <tr><td>ステップインジケータ</td><td>処理段階（アップロード → 処理中 → 結果）を可視化するヘッダ下のUI要素。</td></tr>
+          <tr><td>サマリカード</td><td>結果画面の上部に並ぶ集計値（対象品番数・成功・未マッチ・マッチ率）の各カード。</td></tr>
+          <tr><td>ステータスバッジ</td><td>結果テーブル各行の状態を示す小ラベル。成功（緑）/ 失敗（赤）/ 要確認（黄）。</td></tr>
+          <tr><td>トースト</td><td>画面右下に一時的に表示される通知。3〜4秒で自動消滅。</td></tr>
+          <tr><td>折り畳み（details）</td><td>クリックで展開・収納できる領域。HTMLネイティブの <code>&lt;details&gt;</code> を使用。</td></tr>
+          <tr><td>スピナー</td><td>処理中を示す回転インジケータ。</td></tr>
+          <tr><td>プログレスバー</td><td>処理進捗（0〜100%）を視覚的に示すバー。</td></tr>
+          <tr><td>エンプティステート</td><td>データが0件の場合の表示。「処理履歴はありません」等の説明＋次のアクションへの誘導。</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="section-5">
+      <h2>5. 技術用語（Web・認証・インフラ）</h2>
+      <table>
+        <thead>
+          <tr><th>用語</th><th>定義</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>FastAPI</td><td>Python の非同期 Web フレームワーク。本ツールのバックエンド層。</td></tr>
+          <tr><td>uvicorn</td><td>ASGI サーバ。FastAPI を起動するランタイム。</td></tr>
+          <tr><td>Jinja2</td><td>Python のテンプレートエンジン。サーバサイド HTML レンダリングに使用。</td></tr>
+          <tr><td>OAuth 2.0</td><td>認可プロトコル。本ツールでは Google アカウントログインに使用（Authorization Code Flow）。</td></tr>
+          <tr><td>サービスアカウント</td><td>Google Cloud の非対話的認証用アカウント。本ツールでは粗利表（Sheets）アクセスに使用。</td></tr>
+          <tr><td>許可ドメイン</td><td>OAuth ログイン時に許可するメールドメインのリスト。社外を拒否するために使う。</td></tr>
+          <tr><td>セッション</td><td>ログイン状態をサーバ・クライアント間で維持する仕組み。本ツールは暗号化Cookie。</td></tr>
+          <tr><td>ジョブ（Job）</td><td>1案件の処理単位。アップロード→処理→結果の一連のライフサイクルを持つ。</td></tr>
+          <tr><td>ジョブID</td><td>ジョブを一意に識別する文字列。<code>j_YYYYMMDDHHmmssNNNN</code> 形式。</td></tr>
+          <tr><td>ポーリング</td><td>クライアントが定期的にサーバへ状態を問い合わせる方式。本ツールは1秒ごとに <code>/api/jobs/{id}/status</code>。</td></tr>
+          <tr><td>非同期実行</td><td>HTTP リクエストの応答を待たずに別タスクで処理を進める方式。FastAPI BackgroundTasks を使用。</td></tr>
+          <tr><td>at-rest 暗号化</td><td>ディスク・ストレージに保存されている状態での暗号化。</td></tr>
+          <tr><td>HTTPS</td><td>通信路の暗号化（TLS）。本ツールは本番で必須。</td></tr>
+          <tr><td>Docker</td><td>コンテナ仮想化技術。本ツールは Dockerfile で完結させ、ホスティング先非依存。</td></tr>
+          <tr><td>Cloud Run</td><td>Google Cloud のサーバレスコンテナ実行サービス。本ツールの推奨ホスティング先候補。</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="section-6">
+      <h2>6. 英日対応表</h2>
+      <p>業務用語の英訳・日訳と、コード上の表記。</p>
+      <table>
+        <thead>
+          <tr><th>日本語</th><th>英語</th><th>コード上の表記</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>輸入許可証</td><td>Import Permit</td><td><code>permit</code></td></tr>
+          <tr><td>関税率</td><td>Tariff Rate</td><td><code>tariff_rate</code></td></tr>
+          <tr><td>HSコード</td><td>HS Code</td><td><code>hs_code</code> / <code>hs_key</code>（正規化済み）</td></tr>
+          <tr><td>税表番号</td><td>HS Heading</td><td><code>hs_heading</code>（参考。本ツールでは未独立使用）</td></tr>
+          <tr><td>品目番号</td><td>Statistical Code</td><td><code>stat_code</code>（参考）</td></tr>
+          <tr><td>欄</td><td>Column / Entry</td><td><code>column_no</code></td></tr>
+          <tr><td>品番</td><td>Item Code</td><td><code>hinban</code>（ローマ字保持）</td></tr>
+          <tr><td>素材</td><td>Material / Quality</td><td><code>material</code></td></tr>
+          <tr><td>下代</td><td>Cost Price</td><td><code>cost_price</code>（参考。本ツールでは未使用）</td></tr>
+          <tr><td>粗利表</td><td>Gross Profit Sheet</td><td><code>profit_sheet</code> / <code>profit_df</code></td></tr>
+          <tr><td>処理ジョブ</td><td>Job</td><td><code>job</code> / <code>job_id</code></td></tr>
+          <tr><td>未マッチ</td><td>Unmatched</td><td><code>unmatched</code></td></tr>
+          <tr><td>未マッチ理由</td><td>Unmatched Reason</td><td><code>reason</code></td></tr>
+          <tr><td>証跡</td><td>Trace / Audit Trail</td><td><code>trace</code></td></tr>
+          <tr><td>サマリ</td><td>Summary</td><td><code>summary</code></td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="section-7">
+      <h2>7. コード上の命名規則</h2>
+
+      <h3>7.1 基本ルール</h3>
+      <ul>
+        <li><strong>原則 英語スネークケース</strong>（Python の慣習）</li>
+        <li>日本固有の業務用語は <strong>ローマ字スネークケース</strong> を許容（例: <code>hinban</code>）</li>
+        <li>変数名・関数名の詳細は <a href="development-guidelines.html#section-4">development-guidelines.html 4節</a> を参照</li>
+      </ul>
+
+      <h3>7.2 DataFrame 列名</h3>
+      <table>
+        <thead>
+          <tr><th>概念</th><th>列名</th><th>備考</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>品番</td><td><code>hinban</code></td><td>—</td></tr>
+          <tr><td>Item</td><td><code>item</code></td><td>—</td></tr>
+          <tr><td>gender</td><td><code>gender</code></td><td>—</td></tr>
+          <tr><td>素材（Quality 中核）</td><td><code>material</code></td><td>—</td></tr>
+          <tr><td>素材（Quality 生表記）</td><td><code>quality</code></td><td>—</td></tr>
+          <tr><td>Set up マーカー</td><td><code>is_setup</code></td><td>bool</td></tr>
+          <tr><td>突合トークン</td><td><code>match_tokens</code></td><td>list[str]</td></tr>
+          <tr><td>DESCRIPTION（PL）</td><td><code>description</code></td><td>—</td></tr>
+          <tr><td>HSコード（生表記）</td><td><code>hs_code_raw</code></td><td>—</td></tr>
+          <tr><td>HS正規化キー</td><td><code>hs_key</code></td><td>—</td></tr>
+          <tr><td>関税率（生表記）</td><td><code>関税率_raw</code></td><td>日本語列名を許容</td></tr>
+          <tr><td>関税率（正規化済）</td><td><code>関税率</code></td><td>—</td></tr>
+          <tr><td>欄番号</td><td><code>欄</code></td><td>—</td></tr>
+          <tr><td>未マッチ理由</td><td><code>reason</code></td><td>—</td></tr>
+        </tbody>
+      </table>
+
+      <h3>7.3 ファイル名・ディレクトリ名</h3>
+      <ul>
+        <li>Python モジュール: snake_case（<code>permit_pdf_reader.py</code>）</li>
+        <li>HTML / CSS / JS: kebab-case またはsnake_case 統一（<code>ui-specification.html</code>）</li>
+        <li>YAML 設定: snake_case（<code>config.yaml</code>、<code>vocabulary.yaml</code>、<code>web_config.yaml</code>）</li>
+      </ul>
+
+      <h3>7.4 UI ラベルとの整合</h3>
+      <p>UI 上の表示ラベルは <a href="ui-specification.html#section-7">ui-specification.html 7節</a> の対応表に従う。<strong>UIラベル → 用語集 → コード命名</strong> の3階層が常に整合していること。</p>
+    </section>
+
+  </main>
+
+  <footer class="doc-footer">
+    <a class="back-link" href="index.html">← 戻る</a>
+  </footer>
+
+</body>
+</html>

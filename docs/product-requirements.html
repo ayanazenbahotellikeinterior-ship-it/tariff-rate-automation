@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>プロダクト要求定義書 — 粗利表 関税率更新の自動化</title>
+  <link rel="stylesheet" href="assets/design-system.css">
+</head>
+<body>
+
+  <header class="doc-header">
+    <a class="back-link" href="index.html">← 戻る</a>
+    <h1>プロダクト要求定義書</h1>
+    <p class="doc-meta">プロダクト: 粗利表 関税率更新の自動化 / ドキュメントID: PRD-001 / 最終更新: 2026-05-13 / バージョン: 0.1（ドラフト）</p>
+  </header>
+
+  <details class="toc" open>
+    <summary>目次</summary>
+    <nav aria-label="目次">
+      <ol>
+        <li><a href="#section-1">1. ビジョン</a></li>
+        <li><a href="#section-2">2. ターゲットユーザー</a></li>
+        <li><a href="#section-3">3. 主要機能</a></li>
+        <li><a href="#section-4">4. 成功定義（KPI / 受け入れ観点）</a></li>
+        <li><a href="#section-5">5. 要件（ビジネス / 機能 / 非機能）</a></li>
+        <li><a href="#section-6">6. ユーザーストーリー</a></li>
+        <li><a href="#section-7">7. 受け入れ条件</a></li>
+        <li><a href="#section-8">8. ユースケース図</a></li>
+        <li><a href="#section-9">9. スコープ外（やらないこと）</a></li>
+        <li><a href="#section-10">10. 制約・前提</a></li>
+        <li><a href="#section-11">11. ロードマップ（Phase 1 / Phase 2）</a></li>
+      </ol>
+    </nav>
+  </details>
+
+  <main>
+
+    <section id="section-1">
+      <h2>1. ビジョン</h2>
+      <p>
+        <strong>「輸入案件ごとに発生する『粗利表の関税率更新』を、複数ファイル横断の手作業から解放する」</strong> ツールを提供する。
+        輸入許可証PDF・PL・PO の3種の資料を横断して関税率を割り出し、現状 <strong>1週間</strong> かかる作業を <strong>30分以下</strong> に短縮する。
+      </p>
+      <p>
+        本プロダクトは <em>ローカルファースト・設定駆動・監査可能</em> を3つの柱とし、
+        将来的なクラウド統合や GUI 化よりも、まずは <strong>確実に動く CLI ツール</strong> で日常業務を変えることを優先する。
+      </p>
+    </section>
+
+    <section id="section-2">
+      <h2>2. ターゲットユーザー</h2>
+      <table>
+        <thead>
+          <tr><th>属性</th><th>内容</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>主たるユーザー</td><td>輸入案件を担当する個人（社内オペレーション担当）</td></tr>
+          <tr><td>利用シーン</td><td>輸入案件（荷受）のたびに発生する粗利表の関税率更新業務</td></tr>
+          <tr><td>デバイス</td><td>業務用 Windows PC（ローカル Python 実行）</td></tr>
+          <tr><td>技術リテラシ</td><td>Excel・Google スプレッドシートを日常的に使う。Pythonスクリプトの起動は手順書ベースで可能。</td></tr>
+          <tr><td>非ターゲット</td><td>大量案件を機械的にバッチ処理する物流オペレータ／開発エンジニア</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="section-3">
+      <h2>3. 主要機能</h2>
+      <ol>
+        <li><strong>輸入許可証PDF の自動抽出</strong>: 1案件あたり最大十数欄ある品目ごとに HSコード・関税率を取得</li>
+        <li><strong>PL（Excel）の自動抽出</strong>: DESCRIPTION と HSコードを取得</li>
+        <li><strong>PO の自動抽出</strong>: 品番・Item・gender・Quality(素材)・Set upマーカー を取得（案件ごとに様式が違うため列マッピング設定で吸収）</li>
+        <li><strong>粗利表（スプシ）からの品番取得</strong>: Google Sheets API（閲覧）で粗利表の対象品番リストと行順を取得</li>
+        <li><strong>三ホップ突合</strong>: 品番 → Item/gender/素材 → DESCRIPTION → HSコード → 関税率</li>
+        <li><strong>「Set up」展開</strong>: TOPS+PANTSのセット品を自動展開し、HS一致を確認</li>
+        <li><strong>HSコード・関税率の正規化</strong>: 桁数差・区切り差・S/Gプレフィックス・FREE表記を吸収</li>
+        <li><strong>中間Excel 出力</strong>: 3シート構成（結果 / 証跡 / サマリ）で監査可能</li>
+        <li><strong>未マッチ理由のレポート</strong>: 失敗時は「どのホップで失敗したか」を明示し、人の補完を支援</li>
+      </ol>
+      <p class="doc-meta">※ 粗利表AJ列への自動書き込み、PDFのOCR、あいまいマッチ、GUI化は Phase 2 候補（<a href="#section-11">第11節</a>）。</p>
+    </section>
+
+    <section id="section-4">
+      <h2>4. 成功定義（KPI / 受け入れ観点）</h2>
+      <table>
+        <thead>
+          <tr><th>観点</th><th>指標</th><th>目標値</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>作業時間</td><td>1案件あたりの所要時間</td><td><strong>30分以下</strong>（現状 2〜3日・最大1週間）</td></tr>
+          <tr><td>マッチ率</td><td>関税率を自動取得できた品番の割合</td><td><strong>90%以上</strong>（残りは未マッチ理由を見て人が補完）</td></tr>
+          <tr><td>正確性</td><td>マッチ成功品番の関税率と許可証記載値の一致率</td><td><strong>100%</strong></td></tr>
+          <tr><td>運用簡便性</td><td>スクリプト起動コマンド数</td><td>1コマンド（固定フォルダにファイル投入後）</td></tr>
+          <tr><td>監査性</td><td>マッチ経路の追跡可能性</td><td>全品番で「PO→PL→許可証」の経路が中間Excelから追跡可能</td></tr>
+          <tr><td>冪等性</td><td>同一入力に対する出力の一致</td><td>100%</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="section-5">
+      <h2>5. 要件</h2>
+
+      <h3>5.1 ビジネス要件</h3>
+      <ul>
+        <li>個人利用のため、追加のクラウド利用料・SaaS契約は発生しないこと。</li>
+        <li>Google Sheets API 以外の外部サービス依存を持たないこと（API キーの管理対象を増やさない）。</li>
+        <li>輸入案件の機密情報（取引先・金額）を外部送信しないこと。すべてローカル処理。</li>
+      </ul>
+
+      <h3>5.2 機能要件（FR・抜粋）</h3>
+      <p>詳細は作業単位の <a href="../.steering/20260513-tariff-rate-automation/requirements.html">.steering/20260513-tariff-rate-automation/requirements.html</a> 第8節を参照。</p>
+      <table>
+        <thead>
+          <tr><th>ID</th><th>要件</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>FR-A</td><td>固定入力フォルダ内のファイルを種別ごとに自動分類できる</td></tr>
+          <tr><td>FR-B</td><td>輸入許可証PDFの全欄から HSコード + 関税率を抽出できる</td></tr>
+          <tr><td>FR-C</td><td>PO/PL/許可証/粗利表 の4ソースを横断して品番ごとの関税率を導出できる</td></tr>
+          <tr><td>FR-D</td><td>Set up（セット品）を自動展開できる</td></tr>
+          <tr><td>FR-E</td><td>HSコード・関税率の正規化により異なる表記の差を吸収できる</td></tr>
+          <tr><td>FR-F</td><td>3シート構成の中間Excelを出力できる</td></tr>
+          <tr><td>FR-G</td><td>マッチ失敗の理由を「どのホップで」レベルでレポートできる</td></tr>
+        </tbody>
+      </table>
+
+      <h3>5.3 非機能要件（NFR・抜粋）</h3>
+      <table>
+        <thead>
+          <tr><th>ID</th><th>分類</th><th>要件</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>NFR-A</td><td>パフォーマンス</td><td>1案件（許可証16欄 + PL 50行 + 粗利表数百行）でエンドツーエンド 30分以内</td></tr>
+          <tr><td>NFR-B</td><td>互換性</td><td>Python 3.11+ / Windows 10/11 で動作</td></tr>
+          <tr><td>NFR-C</td><td>セキュリティ</td><td>機密情報のローカル保持・<code>.gitignore</code> 徹底</td></tr>
+          <tr><td>NFR-D</td><td>運用性</td><td>設定はYAMLファイルで管理。コード変更なしで案件ごとの様式差を吸収可能</td></tr>
+          <tr><td>NFR-E</td><td>保守性</td><td>抽出・正規化・突合・出力をモジュール分離</td></tr>
+          <tr><td>NFR-F</td><td>監査性</td><td>処理ログ + 中間Excelの「証跡」シートで全突合経路が追跡可能</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="section-6">
+      <h2>6. ユーザーストーリー</h2>
+      <table>
+        <thead>
+          <tr><th>ID</th><th>ストーリー</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>US-01</td><td>輸入担当者として、案件のファイル一式を固定フォルダに置いてスクリプトを1回実行するだけで、関税率の集約結果が得られたい。</td></tr>
+          <tr><td>US-02</td><td>輸入担当者として、中間Excelを見て粗利表AJ列の数式中の関税率を書き換えるだけで作業を完了させたい。</td></tr>
+          <tr><td>US-03</td><td>輸入担当者として、自動でマッチできなかった品番について「なぜ失敗したか」を知りたい。手動補完の判断材料が欲しいから。</td></tr>
+          <tr><td>US-04</td><td>輸入担当者として、Set up（セット品）も自動展開してほしい。手で2行を見比べる手間を減らしたいから。</td></tr>
+          <tr><td>US-05</td><td>輸入担当者として、案件ごとにPOの様式が変わっても設定ファイルの調整だけで使い回したい。</td></tr>
+          <tr><td>US-06</td><td>輸入担当者として、許可証PDFが20欄を超える規模でも問題なく処理してほしい。</td></tr>
+          <tr><td>US-07</td><td>輸入担当者として、誤った関税率が出たときに突合経路を遡って原因を特定したい。</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="section-7">
+      <h2>7. 受け入れ条件</h2>
+      <p>本プロダクトを「Phase 1 リリース完了」と見なすには、以下すべてを満たすこと。</p>
+      <ol>
+        <li>サンプル案件（許可証PDF 1件 + PL 1件 + PO 1件 + 粗利表）で実行し、中間Excel が3シート構成で生成される。</li>
+        <li>マッチ成功品番の関税率値が許可証記載と一致する（実サンプル全件で確認）。</li>
+        <li>マッチ失敗品番に「どのホップで失敗したか」が記載される。</li>
+        <li>Set up展開・HS正規化・関税率正規化が期待通り動作する。</li>
+        <li>所要時間が 30分以下。</li>
+        <li>同一入力で2回実行しても中間Excel の内容が完全一致する。</li>
+      </ol>
+    </section>
+
+    <section id="section-8">
+      <h2>8. ユースケース図</h2>
+      <figure>
+        <svg viewBox="0 0 720 380" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="関税率自動化のユースケース図">
+          <title>関税率自動化のユースケース図</title>
+          <defs>
+            <marker id="ucArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+              <path d="M0,0 L10,5 L0,10 z" fill="#4338ca"/>
+            </marker>
+          </defs>
+
+          <rect x="180" y="20" width="510" height="340" rx="8" fill="none" stroke="#4338ca" stroke-dasharray="4 4"/>
+          <text x="435" y="40" text-anchor="middle" font-family="sans-serif" font-size="14" fill="#4338ca">システム: 関税率自動化ツール（CLI）</text>
+
+          <g font-family="sans-serif" font-size="13" fill="#0f172a">
+            <circle cx="60" cy="160" r="14" fill="#eef2ff" stroke="#4338ca" stroke-width="2"/>
+            <line x1="60" y1="174" x2="60" y2="220" stroke="#4338ca" stroke-width="2"/>
+            <line x1="40" y1="190" x2="80" y2="190" stroke="#4338ca" stroke-width="2"/>
+            <line x1="60" y1="220" x2="40" y2="250" stroke="#4338ca" stroke-width="2"/>
+            <line x1="60" y1="220" x2="80" y2="250" stroke="#4338ca" stroke-width="2"/>
+            <text x="60" y="275" text-anchor="middle">輸入担当者</text>
+          </g>
+
+          <g font-family="sans-serif" font-size="13" fill="#0f172a">
+            <ellipse cx="320" cy="80" rx="110" ry="24" fill="#eef2ff" stroke="#4338ca"/>
+            <text x="320" y="85" text-anchor="middle">案件ファイルを投入</text>
+
+            <ellipse cx="320" cy="140" rx="110" ry="24" fill="#eef2ff" stroke="#4338ca"/>
+            <text x="320" y="145" text-anchor="middle">関税率の自動集約</text>
+
+            <ellipse cx="320" cy="200" rx="110" ry="24" fill="#eef2ff" stroke="#4338ca"/>
+            <text x="320" y="205" text-anchor="middle">中間Excelを確認</text>
+
+            <ellipse cx="320" cy="260" rx="110" ry="24" fill="#eef2ff" stroke="#4338ca"/>
+            <text x="320" y="265" text-anchor="middle">粗利表AJ列を更新</text>
+
+            <ellipse cx="320" cy="320" rx="110" ry="24" fill="#eef2ff" stroke="#4338ca"/>
+            <text x="320" y="325" text-anchor="middle">未マッチ品番を補完</text>
+
+            <ellipse cx="560" cy="140" rx="100" ry="24" fill="#f1f5f9" stroke="#475569" stroke-dasharray="3 3"/>
+            <text x="560" y="145" text-anchor="middle" fill="#475569">三ホップ突合</text>
+
+            <ellipse cx="560" cy="200" rx="100" ry="24" fill="#f1f5f9" stroke="#475569" stroke-dasharray="3 3"/>
+            <text x="560" y="205" text-anchor="middle" fill="#475569">証跡記録</text>
+          </g>
+
+          <g stroke="#4338ca" stroke-width="1.5" fill="none">
+            <line x1="78" y1="190" x2="210" y2="85" marker-end="url(#ucArrow)"/>
+            <line x1="78" y1="195" x2="210" y2="142" marker-end="url(#ucArrow)"/>
+            <line x1="78" y1="200" x2="210" y2="200" marker-end="url(#ucArrow)"/>
+            <line x1="78" y1="205" x2="210" y2="258" marker-end="url(#ucArrow)"/>
+            <line x1="78" y1="210" x2="210" y2="320" marker-end="url(#ucArrow)"/>
+          </g>
+
+          <g stroke="#475569" stroke-width="1" stroke-dasharray="4 3" fill="none">
+            <line x1="430" y1="140" x2="460" y2="140"/>
+            <line x1="430" y1="195" x2="460" y2="200"/>
+          </g>
+          <text x="445" y="120" font-family="sans-serif" font-size="11" fill="#475569" font-style="italic">«include»</text>
+        </svg>
+        <figcaption>図 1. 関税率自動化ツール ユースケース図</figcaption>
+      </figure>
+    </section>
+
+    <section id="section-9">
+      <h2>9. スコープ外（Phase 1 でやらないこと）</h2>
+      <ul>
+        <li>粗利表（スプシ）のAJ列への自動書き込み（Phase 2）</li>
+        <li>輸入許可証PDFのOCR（スキャン画像は対象外）</li>
+        <li>関税率以外の項目（仕入単価・数量・原産国等）の更新</li>
+        <li>あいまいマッチ・自動学習</li>
+        <li>定期実行・GUI化</li>
+        <li>複数案件の同時バッチ処理</li>
+      </ul>
+    </section>
+
+    <section id="section-10">
+      <h2>10. 制約・前提</h2>
+      <ul>
+        <li>実行環境は Python（ローカル Windows PC）に限定。</li>
+        <li>輸入許可証PDFは税関発行の決まった様式・テキスト選択可能 を前提（OCRは Phase 2）。</li>
+        <li>PL の DESCRIPTION → HSコード、許可証の HSコード → 関税率は原則 1:1 を前提。</li>
+        <li>粗利表は C列=品番（一意）、AJ列=<code>=PRODUCT(AA*, X%)</code> 形式の関税数式、データ3行目以降 を前提。</li>
+        <li>Google Sheets API（閲覧権限のみ）が利用可能な状態である。</li>
+        <li>本プロダクトの作業単位の詳細は <a href="../.steering/">.steering/</a> 配下のステアリングドキュメントを参照。</li>
+      </ul>
+    </section>
+
+    <section id="section-11">
+      <h2>11. ロードマップ（Phase 1 / Phase 2）</h2>
+
+      <h3>11.1 Phase 1（本リリース）</h3>
+      <ul>
+        <li>PDF/Excel 横断抽出 → 三ホップ突合 → 中間Excel 出力</li>
+        <li>粗利表からの読み取り（Sheets API 閲覧権限）</li>
+        <li>人が中間Excelを見て、粗利表AJ列の数式を手で書き換える運用</li>
+      </ul>
+
+      <h3>11.2 Phase 2（将来検討）</h3>
+      <ul>
+        <li>粗利表AJ列への <strong>自動書き込み</strong>（Sheets API 編集権限、数式生成）</li>
+        <li>PL素材サイレントケースの自動判定（HS番号体系からの素材逆引き）</li>
+        <li>あいまいマッチ（語彙辞書で吸収しきれない揺れに対応）</li>
+        <li>過去案件のHS割当を蓄積した自動学習</li>
+        <li>定期実行・GUI化</li>
+      </ul>
+    </section>
+
+  </main>
+
+  <footer class="doc-footer">
+    <a class="back-link" href="index.html">← 戻る</a>
+  </footer>
+
+</body>
+</html>

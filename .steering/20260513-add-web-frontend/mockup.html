@@ -1,0 +1,742 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>モックアップ — 関税率自動化ツール (Web)</title>
+  <style>
+    /* ===== 基本スタイル ===== */
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      --c-bg: #f8fafc;
+      --c-card: #ffffff;
+      --c-text: #0f172a;
+      --c-muted: #64748b;
+      --c-primary: #4338ca;
+      --c-primary-hover: #3730a3;
+      --c-success: #15803d;
+      --c-success-bg: #dcfce7;
+      --c-error: #b91c1c;
+      --c-error-bg: #fee2e2;
+      --c-warning: #b45309;
+      --c-warning-bg: #fef3c7;
+      --c-border: #e2e8f0;
+      --c-border-hover: #cbd5e1;
+      --r: 8px;
+    }
+    body {
+      margin: 0;
+      font-family: -apple-system, "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif;
+      background: var(--c-bg);
+      color: var(--c-text);
+      line-height: 1.6;
+    }
+    button { font-family: inherit; cursor: pointer; }
+    h1, h2, h3 { margin: 0 0 .5rem; line-height: 1.3; }
+
+    /* ===== ヘッダ ===== */
+    .app-header {
+      background: var(--c-card);
+      border-bottom: 1px solid var(--c-border);
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .app-logo {
+      font-weight: 700;
+      font-size: 18px;
+      color: var(--c-primary);
+    }
+    .app-logo::before {
+      content: "📊 ";
+    }
+    .user-info {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      color: var(--c-muted);
+      font-size: 14px;
+    }
+    .user-avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: var(--c-primary);
+      color: #fff;
+      display: grid;
+      place-items: center;
+      font-weight: 600;
+      font-size: 14px;
+    }
+    .nav-btn {
+      background: none;
+      border: 1px solid var(--c-border);
+      padding: 6px 12px;
+      border-radius: 6px;
+      color: var(--c-text);
+      font-size: 13px;
+    }
+    .nav-btn:hover { background: #f1f5f9; }
+
+    /* ===== メインコンテナ ===== */
+    .container {
+      max-width: 1100px;
+      margin: 24px auto;
+      padding: 0 24px;
+    }
+
+    /* ===== ステップインジケータ ===== */
+    .stepper {
+      display: flex;
+      gap: 0;
+      margin-bottom: 32px;
+    }
+    .step {
+      flex: 1;
+      padding: 12px 16px;
+      border-bottom: 3px solid var(--c-border);
+      color: var(--c-muted);
+      font-size: 14px;
+      position: relative;
+    }
+    .step.active {
+      border-bottom-color: var(--c-primary);
+      color: var(--c-primary);
+      font-weight: 600;
+    }
+    .step.done {
+      border-bottom-color: var(--c-success);
+      color: var(--c-success);
+    }
+    .step .num {
+      display: inline-flex;
+      width: 24px; height: 24px;
+      align-items: center; justify-content: center;
+      border-radius: 50%;
+      background: var(--c-border);
+      color: #fff;
+      font-size: 13px;
+      margin-right: 8px;
+    }
+    .step.active .num { background: var(--c-primary); }
+    .step.done .num { background: var(--c-success); }
+    .step.done .num::before { content: "✓"; }
+    .step.done .num span { display: none; }
+
+    /* ===== カード ===== */
+    .card {
+      background: var(--c-card);
+      border: 1px solid var(--c-border);
+      border-radius: var(--r);
+      padding: 24px;
+      margin-bottom: 16px;
+    }
+    .card h2 { font-size: 18px; margin-bottom: 16px; }
+
+    /* ===== ファイル投入ゾーン ===== */
+    .upload-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+    @media (max-width: 800px) {
+      .upload-grid { grid-template-columns: 1fr; }
+    }
+    .drop-zone {
+      border: 2px dashed var(--c-border-hover);
+      border-radius: var(--r);
+      padding: 24px;
+      text-align: center;
+      transition: all .15s;
+      cursor: pointer;
+      background: #fafbfc;
+    }
+    .drop-zone:hover {
+      border-color: var(--c-primary);
+      background: #f5f3ff;
+    }
+    .drop-zone.dragover {
+      border-color: var(--c-primary);
+      background: #ede9fe;
+    }
+    .drop-zone.has-file {
+      border-color: var(--c-success);
+      border-style: solid;
+      background: var(--c-success-bg);
+    }
+    .drop-zone .icon {
+      font-size: 32px;
+      margin-bottom: 8px;
+    }
+    .drop-zone .label {
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    .drop-zone .hint {
+      color: var(--c-muted);
+      font-size: 12px;
+    }
+    .drop-zone .filename {
+      color: var(--c-success);
+      font-weight: 600;
+      word-break: break-all;
+      margin-top: 8px;
+    }
+    .drop-zone input[type="file"] { display: none; }
+
+    /* ===== 実行ボタン ===== */
+    .actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+    }
+    .btn-primary {
+      background: var(--c-primary);
+      color: #fff;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 6px;
+      font-size: 15px;
+      font-weight: 600;
+      transition: background .15s;
+    }
+    .btn-primary:hover:not(:disabled) { background: var(--c-primary-hover); }
+    .btn-primary:disabled {
+      background: var(--c-border-hover);
+      cursor: not-allowed;
+    }
+    .btn-secondary {
+      background: #fff;
+      color: var(--c-primary);
+      border: 1px solid var(--c-primary);
+      padding: 12px 20px;
+      border-radius: 6px;
+      font-size: 15px;
+      font-weight: 600;
+    }
+    .btn-secondary:hover { background: #f5f3ff; }
+
+    /* ===== 処理中表示 ===== */
+    .processing {
+      text-align: center;
+      padding: 48px;
+    }
+    .spinner {
+      width: 48px; height: 48px;
+      border: 4px solid var(--c-border);
+      border-top-color: var(--c-primary);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 16px;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    .processing-text { color: var(--c-muted); font-size: 15px; }
+    .processing-substep { color: var(--c-muted); font-size: 13px; margin-top: 8px; }
+
+    /* ===== 結果サマリ ===== */
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    @media (max-width: 800px) {
+      .summary { grid-template-columns: repeat(2, 1fr); }
+    }
+    .stat {
+      background: var(--c-card);
+      border: 1px solid var(--c-border);
+      border-radius: var(--r);
+      padding: 16px;
+      text-align: center;
+    }
+    .stat .val {
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--c-text);
+    }
+    .stat .label {
+      font-size: 12px;
+      color: var(--c-muted);
+      margin-top: 4px;
+    }
+    .stat.success .val { color: var(--c-success); }
+    .stat.error .val { color: var(--c-error); }
+    .stat.primary .val { color: var(--c-primary); }
+
+    /* ===== 結果テーブル ===== */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th, td {
+      padding: 10px 12px;
+      text-align: left;
+      border-bottom: 1px solid var(--c-border);
+    }
+    th {
+      background: #f1f5f9;
+      font-weight: 600;
+      color: var(--c-text);
+      font-size: 13px;
+    }
+    tr:hover { background: #f8fafc; }
+    td.hinban {
+      font-family: "Consolas", monospace;
+      font-weight: 600;
+    }
+    td.rate {
+      text-align: center;
+      font-weight: 700;
+      font-family: "Consolas", monospace;
+    }
+    td.rate-success { color: var(--c-success); }
+    td.rate-empty { background: #f1f5f9; }
+    td.reason {
+      color: var(--c-error);
+      font-size: 13px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .badge-success { background: var(--c-success-bg); color: var(--c-success); }
+    .badge-error { background: var(--c-error-bg); color: var(--c-error); }
+    .badge-warning { background: var(--c-warning-bg); color: var(--c-warning); }
+
+    /* ===== 詳細（折り畳み）===== */
+    details {
+      margin-top: 16px;
+      border: 1px solid var(--c-border);
+      border-radius: var(--r);
+    }
+    details summary {
+      padding: 12px 16px;
+      cursor: pointer;
+      font-weight: 600;
+      user-select: none;
+    }
+    details[open] summary { border-bottom: 1px solid var(--c-border); }
+    details .detail-body {
+      padding: 16px;
+      font-size: 13px;
+    }
+    .trace {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    .trace-step {
+      background: #f1f5f9;
+      padding: 4px 10px;
+      border-radius: 4px;
+      font-family: "Consolas", monospace;
+      font-size: 12px;
+    }
+    .trace-arrow { color: var(--c-muted); }
+
+    /* ===== トースト ===== */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: var(--c-success);
+      color: #fff;
+      padding: 12px 20px;
+      border-radius: 6px;
+      box-shadow: 0 4px 12px rgba(0,0,0,.15);
+      opacity: 0;
+      pointer-events: none;
+      transition: all .2s;
+    }
+    .toast.show {
+      opacity: 1;
+      transform: translateY(-4px);
+    }
+
+    /* ===== ユーティリティ ===== */
+    .hidden { display: none !important; }
+    .meta { color: var(--c-muted); font-size: 13px; margin-top: 4px; }
+    .mt-1 { margin-top: 8px; }
+    .mt-2 { margin-top: 16px; }
+    .mt-3 { margin-top: 24px; }
+    .note {
+      background: #f5f3ff;
+      border-left: 4px solid var(--c-primary);
+      padding: 12px 16px;
+      border-radius: 4px;
+      color: var(--c-text);
+      font-size: 14px;
+      margin-bottom: 16px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ===== ヘッダ ===== -->
+  <header class="app-header">
+    <div class="app-logo">関税率自動化ツール</div>
+    <div class="user-info">
+      <button class="nav-btn" onclick="navigateTo('upload')">アップロード</button>
+      <button class="nav-btn" onclick="navigateTo('history')">履歴</button>
+      <span style="margin: 0 8px;">|</span>
+      <div class="user-avatar">A</div>
+      <span>ayana.zenba@hotellikeinterior.com</span>
+    </div>
+  </header>
+
+  <!-- ===== メインコンテナ ===== -->
+  <div class="container">
+
+    <!-- ===== ステップインジケータ ===== -->
+    <div class="stepper" id="stepper">
+      <div class="step active" data-step="1"><span class="num"><span>1</span></span>ファイルアップロード</div>
+      <div class="step" data-step="2"><span class="num"><span>2</span></span>処理中</div>
+      <div class="step" data-step="3"><span class="num"><span>3</span></span>結果確認</div>
+    </div>
+
+    <!-- ===== STEP 1: アップロード画面 ===== -->
+    <section id="step-upload">
+      <div class="note">
+        <strong>📌 必要なファイル</strong>: 輸入許可証PDF・PO（PDF/Excel）・PL（Excel）の3ファイルをアップロードして「実行」を押してください。
+      </div>
+
+      <div class="card">
+        <h2>1. ファイル選択</h2>
+        <p class="meta">各ボックスにファイルをドラッグ&ドロップ、またはクリックで選択。</p>
+
+        <div class="upload-grid">
+          <!-- 輸入許可証 -->
+          <div class="drop-zone" data-type="permit" onclick="document.getElementById('file-permit').click()">
+            <div class="icon">📜</div>
+            <div class="label">輸入許可証 PDF</div>
+            <div class="hint">税関発行の許可通知書</div>
+            <div class="filename" id="filename-permit"></div>
+            <input type="file" id="file-permit" accept=".pdf" onchange="handleFile(event, 'permit')">
+          </div>
+
+          <!-- PO -->
+          <div class="drop-zone" data-type="po" onclick="document.getElementById('file-po').click()">
+            <div class="icon">📋</div>
+            <div class="label">PO（発注書）</div>
+            <div class="hint">PDF または Excel</div>
+            <div class="filename" id="filename-po"></div>
+            <input type="file" id="file-po" accept=".pdf,.xlsx,.xls" onchange="handleFile(event, 'po')">
+          </div>
+
+          <!-- PL -->
+          <div class="drop-zone" data-type="pl" onclick="document.getElementById('file-pl').click()">
+            <div class="icon">📦</div>
+            <div class="label">PL（パッキングリスト）</div>
+            <div class="hint">Excel</div>
+            <div class="filename" id="filename-pl"></div>
+            <input type="file" id="file-pl" accept=".xlsx,.xls" onchange="handleFile(event, 'pl')">
+          </div>
+        </div>
+
+        <div class="actions">
+          <button class="btn-primary" id="btn-run" disabled onclick="runProcessing()">
+            ▶ 実行
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== STEP 2: 処理中 ===== -->
+    <section id="step-processing" class="hidden">
+      <div class="card">
+        <div class="processing">
+          <div class="spinner"></div>
+          <div class="processing-text" id="processing-text">許可証PDFを解析中...</div>
+          <div class="processing-substep" id="processing-substep">欄を抽出しています</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== STEP 3: 結果 ===== -->
+    <section id="step-result" class="hidden">
+
+      <!-- サマリ -->
+      <div class="summary">
+        <div class="stat primary">
+          <div class="val">3</div>
+          <div class="label">対象品番数</div>
+        </div>
+        <div class="stat success">
+          <div class="val">3</div>
+          <div class="label">マッチ成功</div>
+        </div>
+        <div class="stat error">
+          <div class="val">0</div>
+          <div class="label">未マッチ</div>
+        </div>
+        <div class="stat">
+          <div class="val">100%</div>
+          <div class="label">マッチ率</div>
+        </div>
+      </div>
+
+      <!-- 結果テーブル -->
+      <div class="card">
+        <h2>結果一覧</h2>
+        <p class="meta">下記の関税率を、粗利表のAJ列の数式（<code>=PRODUCT(AA*, 9%)</code>）の「9%」部分に書き換えてください。</p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>品番</th>
+              <th>商品（PO Item）</th>
+              <th>gender</th>
+              <th>素材</th>
+              <th>関税率</th>
+              <th>状態</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>1</td>
+              <td class="hinban">ctstpjlblue</td>
+              <td>Cotton twill stripe pajama (Set up)</td>
+              <td>WOMEN</td>
+              <td>100% cotton</td>
+              <td class="rate rate-success">7.4%</td>
+              <td><span class="badge badge-success">✓ 成功</span></td>
+            </tr>
+            <tr>
+              <td>2</td>
+              <td class="hinban">ctstpjlice</td>
+              <td>Cotton twill stripe pajama (Set up)</td>
+              <td>WOMEN</td>
+              <td>100% cotton</td>
+              <td class="rate rate-success">7.4%</td>
+              <td><span class="badge badge-success">✓ 成功</span></td>
+            </tr>
+            <tr>
+              <td>3</td>
+              <td class="hinban">ctstpjmblue</td>
+              <td>Cotton twill stripe pajama (Set up)</td>
+              <td>MEN</td>
+              <td>100% cotton</td>
+              <td class="rate rate-success">7.4%</td>
+              <td><span class="badge badge-success">✓ 成功</span></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <!-- 突合経路の詳細 -->
+        <details class="mt-2">
+          <summary>🔍 突合経路（証跡）の詳細を見る</summary>
+          <div class="detail-body">
+            <p><strong>ctstpjlblue</strong> の突合経路:</p>
+            <div class="trace">
+              <span class="trace-step">PO: 品番 ctstpjlblue</span>
+              <span class="trace-arrow">→</span>
+              <span class="trace-step">Item: Cotton twill stripe pajama (WOMEN, 100% cotton)</span>
+              <span class="trace-arrow">→</span>
+              <span class="trace-step">Set up展開</span>
+            </div>
+            <div class="trace">
+              <span class="trace-step">PL: WOMEN'S COTTON TWILL STRIPE PAJAMA TOPS + PANTS</span>
+              <span class="trace-arrow">→</span>
+              <span class="trace-step">HS: 6208210000</span>
+              <span class="trace-arrow">→</span>
+              <span class="trace-step">正規化: 620821</span>
+            </div>
+            <div class="trace">
+              <span class="trace-step">許可証 欄07: WOMEN'S PYJAMAS,NIGHTDRESS OF COTTON</span>
+              <span class="trace-arrow">→</span>
+              <span class="trace-step">品目番号: 6208.21-000</span>
+              <span class="trace-arrow">→</span>
+              <span class="trace-step"><strong>G 7.4%</strong></span>
+            </div>
+            <p class="meta mt-2">※ Set up（セット品）のため PL の TOPS と PANTS の2行を引き、HSコードが同一（6208210000）であることを確認したうえで関税率を確定。</p>
+          </div>
+        </details>
+
+        <!-- 未マッチの例（架空。実際は出ない）-->
+        <details class="mt-2">
+          <summary>📝 未マッチがあった場合の見え方（参考イメージ）</summary>
+          <div class="detail-body">
+            <table style="margin-top: 8px;">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>品番</th>
+                  <th>関税率</th>
+                  <th>未マッチ理由</th>
+                  <th>状態</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>4</td>
+                  <td class="hinban">ctstpjlgreen</td>
+                  <td class="rate rate-empty">—</td>
+                  <td class="reason">PLにItem/Quality該当なし（検索キー: WOMEN'S+COTTON+TWILL+STRIPE+PAJAMA）</td>
+                  <td><span class="badge badge-error">✗ 未マッチ</span></td>
+                </tr>
+                <tr>
+                  <td>5</td>
+                  <td class="hinban">silknightcap01</td>
+                  <td class="rate rate-empty">—</td>
+                  <td class="reason">許可証に該当HSコードなし（PL=6505009900, 頭6桁=650500）</td>
+                  <td><span class="badge badge-error">✗ 未マッチ</span></td>
+                </tr>
+                <tr>
+                  <td>6</td>
+                  <td class="hinban">xyz999</td>
+                  <td class="rate rate-empty">—</td>
+                  <td class="reason">POに品番なし</td>
+                  <td><span class="badge badge-warning">⚠ 要確認</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </details>
+
+        <div class="actions mt-3">
+          <button class="btn-secondary" onclick="resetAll()">📤 別の案件を処理</button>
+          <button class="btn-primary" onclick="downloadExcel()">⬇ 中間Excelをダウンロード</button>
+        </div>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- ===== トースト ===== -->
+  <div class="toast" id="toast">処理が完了しました</div>
+
+  <script>
+    // ===== 状態管理 =====
+    const files = { permit: null, po: null, pl: null };
+
+    // ===== ファイル選択ハンドラ =====
+    function handleFile(e, type) {
+      const file = e.target.files[0];
+      if (!file) return;
+      files[type] = file;
+      document.getElementById(`filename-${type}`).textContent = `✓ ${file.name}`;
+      document.querySelector(`[data-type="${type}"]`).classList.add('has-file');
+      updateRunBtn();
+    }
+
+    function updateRunBtn() {
+      const allReady = files.permit && files.po && files.pl;
+      document.getElementById('btn-run').disabled = !allReady;
+    }
+
+    // ===== ドラッグ&ドロップ =====
+    document.querySelectorAll('.drop-zone').forEach(zone => {
+      ['dragenter', 'dragover'].forEach(ev => {
+        zone.addEventListener(ev, e => {
+          e.preventDefault();
+          zone.classList.add('dragover');
+        });
+      });
+      ['dragleave', 'drop'].forEach(ev => {
+        zone.addEventListener(ev, e => {
+          e.preventDefault();
+          zone.classList.remove('dragover');
+        });
+      });
+      zone.addEventListener('drop', e => {
+        const file = e.dataTransfer.files[0];
+        if (!file) return;
+        const type = zone.dataset.type;
+        files[type] = file;
+        document.getElementById(`filename-${type}`).textContent = `✓ ${file.name}`;
+        zone.classList.add('has-file');
+        updateRunBtn();
+      });
+    });
+
+    // ===== 実行（モック処理）=====
+    function runProcessing() {
+      document.getElementById('step-upload').classList.add('hidden');
+      document.getElementById('step-processing').classList.remove('hidden');
+      setStep(2);
+
+      const steps = [
+        { text: "許可証PDFを解析中...", sub: "欄を抽出しています（最大20欄）" },
+        { text: "PLを読み込み中...", sub: "DESCRIPTION と HSコードを抽出しています" },
+        { text: "POを読み込み中...", sub: "品番と素材を抽出しています" },
+        { text: "粗利表（スプレッドシート）から品番リストを取得中...", sub: "C列のデータを読み込み中" },
+        { text: "三ホップ突合を実行中...", sub: "PO → PL → 許可証 を照合中" },
+        { text: "中間Excelを生成中...", sub: "結果・証跡・サマリの3シートを作成中" }
+      ];
+
+      let i = 0;
+      const interval = setInterval(() => {
+        if (i < steps.length) {
+          document.getElementById('processing-text').textContent = steps[i].text;
+          document.getElementById('processing-substep').textContent = steps[i].sub;
+          i++;
+        } else {
+          clearInterval(interval);
+          showResult();
+        }
+      }, 700);
+    }
+
+    function showResult() {
+      document.getElementById('step-processing').classList.add('hidden');
+      document.getElementById('step-result').classList.remove('hidden');
+      setStep(3);
+      showToast("✓ 処理が完了しました（3品番すべて成功）");
+    }
+
+    function setStep(n) {
+      document.querySelectorAll('.step').forEach(s => {
+        const step = parseInt(s.dataset.step);
+        s.classList.remove('active', 'done');
+        if (step < n) s.classList.add('done');
+        else if (step === n) s.classList.add('active');
+      });
+    }
+
+    function showToast(msg) {
+      const toast = document.getElementById('toast');
+      toast.textContent = msg;
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 3000);
+    }
+
+    function downloadExcel() {
+      showToast("⬇ tariff_20260513_1430.xlsx をダウンロードしました（モック）");
+    }
+
+    function resetAll() {
+      files.permit = files.po = files.pl = null;
+      ['permit', 'po', 'pl'].forEach(t => {
+        document.getElementById(`filename-${t}`).textContent = '';
+        document.querySelector(`[data-type="${t}"]`).classList.remove('has-file');
+        document.getElementById(`file-${t}`).value = '';
+      });
+      document.getElementById('step-result').classList.add('hidden');
+      document.getElementById('step-upload').classList.remove('hidden');
+      setStep(1);
+      updateRunBtn();
+    }
+
+    function navigateTo(page) {
+      if (page === 'history') {
+        alert('履歴画面（モック）: ここに過去30日のジョブ一覧が表示されます。');
+      } else {
+        resetAll();
+      }
+    }
+  </script>
+
+</body>
+</html>

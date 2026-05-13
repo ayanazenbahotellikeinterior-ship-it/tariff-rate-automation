@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>要求定義書 — 粗利表 関税率更新の自動化</title>
+  <link rel="stylesheet" href="../../docs/assets/design-system.css">
+</head>
+<body>
+
+  <header class="doc-header">
+    <a class="back-link" href="../../docs/index.html">← ドキュメントトップへ戻る</a>
+    <nav aria-label="パンくず" class="breadcrumb">
+      <ol>
+        <li><a href="../../docs/index.html">docs</a></li>
+        <li><a href="../">.steering</a></li>
+        <li>20260513-tariff-rate-automation</li>
+        <li aria-current="page">requirements.html</li>
+      </ol>
+    </nav>
+    <h1>要求定義書 — 粗利表 関税率更新の自動化</h1>
+    <p class="doc-meta">ドキュメントID: REQ-20260513-001 / 最終更新: 2026-05-13 / バージョン: 0.2（サンプル検証反映）</p>
+  </header>
+
+  <details class="toc" open>
+    <summary>目次</summary>
+    <nav aria-label="目次">
+      <ol>
+        <li><a href="#section-1">1. 背景と目的</a></li>
+        <li><a href="#section-2">2. 対象ユーザーと利用シーン</a></li>
+        <li><a href="#section-3">3. ゴール範囲（スコープ）</a></li>
+        <li><a href="#section-4">4. 業務フロー（三ホップ突合）</a></li>
+        <li><a href="#section-5">5. 入力（Input）</a></li>
+        <li><a href="#section-6">6. 出力（Output）</a></li>
+        <li><a href="#section-7">7. ユーザーストーリー</a></li>
+        <li><a href="#section-8">8. 機能要件（FR）</a></li>
+        <li><a href="#section-9">9. 非機能要件（NFR）</a></li>
+        <li><a href="#section-10">10. 受け入れ条件</a></li>
+        <li><a href="#section-11">11. スコープ外（やらないこと）</a></li>
+        <li><a href="#section-12">12. 制約・前提</a></li>
+        <li><a href="#section-13">13. 用語（Glossary 行き候補）</a></li>
+        <li><a href="#section-14">14. リスク（実サンプル検証結果）</a></li>
+        <li><a href="#section-15">15. Phase 2（将来検討）</a></li>
+      </ol>
+    </nav>
+  </details>
+
+  <main>
+
+    <section id="section-1">
+      <h2>1. 背景と目的</h2>
+      <h3>1.1 背景（現状の業務）</h3>
+      <ul>
+        <li>輸入案件（荷受）のたびに、粗利表（Googleスプレッドシート）の商品ごとの関税率を <strong>手入力で更新</strong> している。</li>
+        <li>具体的には、AJ列の数式 <code>=PRODUCT(AA*, 9%)</code> の「9%」部分を、当該品番の正しい関税率に **書き換え** ている。</li>
+        <li>正しい関税率を割り出すには、輸入許可証（PDF）と PL（Excel）を突合し、PO（PDF/Excel）を介して品番と紐づける作業が必要。</li>
+        <li>1案件あたり <strong>2〜3日、最大1週間</strong> を要する。</li>
+      </ul>
+
+      <h3>1.2 目的</h3>
+      <p>
+        「複数の入力ファイルを横断し、商品ごとの関税率を中間Excelに集約する」工程を自動化し、
+        手作業を <strong>1週間 → 30分以下</strong> に短縮する。
+        スプシへの貼付（数式書き換え）は人が中間Excelを見ながら手動で行う（Phase 2 で自動化検討）。
+      </p>
+    </section>
+
+    <section id="section-2">
+      <h2>2. 対象ユーザーと利用シーン</h2>
+      <table>
+        <thead>
+          <tr><th>属性</th><th>内容</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>主たるユーザー</td><td>輸入案件を担当する自分（個人運用）</td></tr>
+          <tr><td>利用タイミング</td><td>輸入案件（荷受）のたび／不定期</td></tr>
+          <tr><td>実行環境</td><td>ローカルPC（Python）</td></tr>
+          <tr><td>技術前提</td><td>Python 実行環境のセットアップが可能</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="section-3">
+      <h2>3. ゴール範囲（スコープ）</h2>
+      <h3>3.1 含める（IN）</h3>
+      <ul>
+        <li>輸入許可証 PDF からの HSコード（税表番号・品目番号）・関税率の自動抽出（1PDFに最大十数欄）</li>
+        <li>PL（Excel）からの DESCRIPTION / HSコードの自動抽出</li>
+        <li>PO（PDF/Excel）からの 品番 / Item / gender / 素材（Quality）の自動抽出</li>
+        <li>三ホップ突合（品番 → PL DESCRIPTION → 許可証品目番号 → 関税率）</li>
+        <li>「Set up」（セット品）マーカー検出と PL の TOPS+PANTS への展開</li>
+        <li>HSコード桁数差の正規化（区切り除去・頭6桁での照合）</li>
+        <li>関税率の正規化（プレフィックス除去・<code>FREE</code> → <code>0%</code>）</li>
+        <li>中間Excel（結果 / 証跡 / サマリ の3シート構成）の生成</li>
+      </ul>
+
+      <h3>3.2 含めない（OUT）</h3>
+      <ul>
+        <li>粗利表（スプシ）への自動書き込み／自動数式更新（Phase 2 で検討）</li>
+        <li>輸入許可証PDFのOCR処理（テキスト選択可能PDFのみ対象）</li>
+        <li>関税率以外の項目（仕入単価・数量・原産国等）の更新</li>
+      </ul>
+    </section>
+
+    <section id="section-4">
+      <h2>4. 業務フロー（三ホップ突合）</h2>
+      <p>関税率を品番に紐づける情報の流れを以下に示す。</p>
+      <figure>
+        <svg viewBox="0 0 760 340" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="三ホップ突合の図">
+          <title>三ホップ突合</title>
+          <defs>
+            <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+              <path d="M0,0 L10,5 L0,10 z" fill="#4338ca"/>
+            </marker>
+          </defs>
+
+          <g font-family="sans-serif" font-size="12" fill="#0f172a">
+            <rect x="20" y="130" width="140" height="70" rx="8" fill="#eef2ff" stroke="#4338ca"/>
+            <text x="90" y="155" text-anchor="middle">粗利表（スプシ）</text>
+            <text x="90" y="175" text-anchor="middle" fill="#475569">C列: 品番</text>
+            <text x="90" y="192" text-anchor="middle" fill="#475569">AJ列: 関税数式</text>
+
+            <rect x="200" y="130" width="140" height="70" rx="8" fill="#eef2ff" stroke="#4338ca"/>
+            <text x="270" y="150" text-anchor="middle">PO</text>
+            <text x="270" y="170" text-anchor="middle" fill="#475569">品番 / Item /</text>
+            <text x="270" y="186" text-anchor="middle" fill="#475569">gender / Quality</text>
+
+            <rect x="380" y="130" width="140" height="70" rx="8" fill="#eef2ff" stroke="#4338ca"/>
+            <text x="450" y="150" text-anchor="middle">PL（Excel）</text>
+            <text x="450" y="170" text-anchor="middle" fill="#475569">DESCRIPTION →</text>
+            <text x="450" y="186" text-anchor="middle" fill="#475569">HSコード（10桁）</text>
+
+            <rect x="560" y="130" width="160" height="70" rx="8" fill="#eef2ff" stroke="#4338ca"/>
+            <text x="640" y="150" text-anchor="middle">輸入許可証 PDF</text>
+            <text x="640" y="170" text-anchor="middle" fill="#475569">品目番号 →</text>
+            <text x="640" y="186" text-anchor="middle" fill="#475569">関税率（S/G ±%）</text>
+
+            <rect x="280" y="250" width="200" height="50" rx="8" fill="#fef3c7" stroke="#b45309"/>
+            <text x="380" y="272" text-anchor="middle">中間Excel（3シート）</text>
+            <text x="380" y="288" text-anchor="middle" fill="#92400e">結果・証跡・サマリ</text>
+          </g>
+
+          <g stroke="#4338ca" stroke-width="1.5" fill="none">
+            <line x1="160" y1="165" x2="200" y2="165" marker-end="url(#arr)"/>
+            <line x1="340" y1="165" x2="380" y2="165" marker-end="url(#arr)"/>
+            <line x1="520" y1="165" x2="560" y2="165" marker-end="url(#arr)"/>
+            <line x1="640" y1="200" x2="480" y2="250" marker-end="url(#arr)"/>
+            <line x1="90"  y1="200" x2="280" y2="250" marker-end="url(#arr)"/>
+          </g>
+
+          <text x="370" y="40" text-anchor="middle" font-family="sans-serif" font-size="15" fill="#1e293b">
+            品番 → Item+gender+Quality → DESCRIPTION → HS(頭6桁) → 関税率
+          </text>
+          <text x="370" y="62" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#475569">
+            （Set up なら PL 2行を引いて HS 一致を確認）
+          </text>
+        </svg>
+        <figcaption>図 1. 三ホップ突合の全体像</figcaption>
+      </figure>
+
+      <h3>4.1 処理ステップ</h3>
+      <ol>
+        <li>固定入力フォルダ（<code>./inputs/</code>）から全入力ファイルを読み込む。</li>
+        <li>Google Sheets API（閲覧権限）で粗利表のC列（品番）と行順を取得する。</li>
+        <li>各品番について PO から <strong>Item / gender / Quality(素材)</strong> を取得する。</li>
+        <li>Item語彙 + gender + 素材 を **部分一致 AND** で PL の DESCRIPTION に対して検索し、対応行を特定。</li>
+        <li>「Set up」マーカーがある場合は、TOPS と PANTS の2行を引き、HSコードの一致を確認。</li>
+        <li>PLのHSコードを <strong>頭6桁に正規化</strong> し、許可証PDFの品目番号（同じく頭6桁正規化）と照合して関税率を取得。</li>
+        <li>関税率を正規化（<code>S</code>/<code>G</code> プレフィックス除去、<code>FREE</code> → <code>0%</code>）。</li>
+        <li>粗利表の行順を保ったまま中間Excelの「結果」シートに記載。証跡シートに突合経路、サマリシートに集計を出力。</li>
+      </ol>
+    </section>
+
+    <section id="section-5">
+      <h2>5. 入力（Input）</h2>
+
+      <h3>5.1 入力ファイル種別</h3>
+      <table>
+        <thead>
+          <tr><th>種類</th><th>形式</th><th>取得項目</th><th>備考</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>輸入許可証</td>
+            <td>PDF（テキスト選択可・税関の決まった様式）</td>
+            <td>欄番号 / 品名 / 税表番号 / <strong>品目番号</strong> / 関税率</td>
+            <td>1PDFに <strong>最大十数欄</strong>（実サンプルは16欄／8ページ）</td>
+          </tr>
+          <tr>
+            <td>PL（Packing List）</td>
+            <td>Excel</td>
+            <td>DESCRIPTION / HSコード</td>
+            <td>HSコードは <strong>10桁ベタ書き</strong> または <code>XXXX.XX-XXXX</code> 形式（混在）</td>
+          </tr>
+          <tr>
+            <td>PO（Purchase Order）</td>
+            <td>PDF または Excel（案件ごとに違う）</td>
+            <td>品番 / Item / gender / Quality(素材) / 「Set up」マーカー</td>
+            <td>列構成が <strong>案件ごとに違う</strong>（要 列マッピング設定）</td>
+          </tr>
+          <tr>
+            <td>粗利表</td>
+            <td>Google スプレッドシート</td>
+            <td>C列（品番）と行順</td>
+            <td>データは3行目以降。Sheets API（閲覧権限）で取得</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>5.2 入力ファイル配置</h3>
+      <ul>
+        <li>固定フォルダ（例: <code>./inputs/</code>）に <strong>全入力ファイルを放り込んで一括処理</strong>。</li>
+        <li>ファイル種別はファイル名・拡張子・内容ヘッダから自動判定。</li>
+      </ul>
+
+      <h3>5.3 PO の列構成多様性</h3>
+      <p>実サンプル検証で、PO は案件ごとにヘッダ構造が異なることが判明。設定ファイルで以下を吸収する：</p>
+      <ul>
+        <li><strong>品番列名</strong>（"No" 等、案件ごとに異なる）</li>
+        <li><strong>Item列名</strong>（"Item"）</li>
+        <li><strong>gender列名</strong>（"gender" / "Size" 等）</li>
+        <li><strong>素材を含む列名候補</strong>（"Material" / "Quality"）</li>
+        <li><strong>Set upマーカー列名</strong>（空欄列 / 専用列）</li>
+      </ul>
+
+      <h3>5.4 許可証PDFの記載パターン</h3>
+      <ul>
+        <li>各欄は <code>&lt; NN 欄&gt;統合先欄</code> のマーカーで区切られる。</li>
+        <li>関税率は <code>S 4.5%</code> / <code>G 5.3%</code> / <code>G FREE</code> 等のパターン（プレフィックス + 数値% または FREE）。</li>
+        <li>HSコードは <strong>税表番号（4+2桁）</strong> と <strong>品目番号（4+2+3桁）</strong> の2種類。</li>
+      </ul>
+    </section>
+
+    <section id="section-6">
+      <h2>6. 出力（Output）</h2>
+
+      <h3>6.1 出力ファイル</h3>
+      <ul>
+        <li>中間Excel 1ファイル: <code>./outputs/tariff_YYYYMMDD_HHmm.xlsx</code></li>
+        <li>3シート構成（下記）</li>
+      </ul>
+
+      <h3>6.2 シート1「結果」 — 粗利表貼付用</h3>
+      <table>
+        <thead>
+          <tr><th>列</th><th>内容</th><th>備考</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>A: No</td><td>粗利表の行番号（3始まり）</td><td>—</td></tr>
+          <tr><td>B: 品番</td><td>粗利表C列の品番をそのまま</td><td>行順保持</td></tr>
+          <tr><td>C: 関税率</td><td><strong>5.4%</strong> 形式の文字列／<code>FREE</code>は <strong>0%</strong> として記載</td><td>失敗時は空欄</td></tr>
+          <tr><td>D: 未マッチ理由</td><td>マッチ失敗時のみ理由を記載</td><td>成功時は空欄</td></tr>
+        </tbody>
+      </table>
+
+      <h3>6.3 シート2「証跡」 — 突合経路（監査用）</h3>
+      <p>1品番＝1行で、PO → PL → 許可証 の各ホップで何にマッチしたかを記録する。Set up展開行はセル内改行で表示。</p>
+      <p>主な列: 品番 / PO Item / gender / 素材 / マッチ語彙(導出) / PL DESCRIPTION / PL HSコード / HS正規化(頭6桁) / 許可証欄 / 許可証品名 / 許可証品目番号 / 関税率 / ステータス</p>
+
+      <h3>6.4 シート3「サマリ」 — 処理実行レポート</h3>
+      <p>実行日時 / 読み込んだファイル一覧 / 対象品番数 / マッチ成功率 / 未マッチ理由の内訳件数 / 警告事項を記載。</p>
+
+      <h3>6.5 未マッチ理由の文言（粒度）</h3>
+      <table>
+        <thead>
+          <tr><th>ケース</th><th>関税率列</th><th>未マッチ理由列</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>マッチ成功</td><td>関税率の値</td><td>空欄</td></tr>
+          <tr><td>POに品番が見つからない</td><td>空欄</td><td>「POに品番なし」</td></tr>
+          <tr><td>PL の DESCRIPTION 検索で部分一致行が見つからない</td><td>空欄</td><td>「PLにItem/Quality該当なし（検索キー: WOMEN'S+COTTON+...）」</td></tr>
+          <tr><td>Set upでPLのTOPS+PANTSの HS が不一致</td><td>空欄</td><td>「PLでSet up展開時にHS不一致（TOPS=XX, PANTS=YY）」</td></tr>
+          <tr><td>許可証に該当HSコードがない</td><td>空欄</td><td>「許可証に該当HSコードなし（PL=XXXXXXXXXX, 頭6桁=XXXXXX）」</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="section-7">
+      <h2>7. ユーザーストーリー</h2>
+      <table>
+        <thead>
+          <tr><th>ID</th><th>ストーリー</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>US-01</td><td>輸入担当者として、案件のファイル一式を固定フォルダに置いてスクリプトを1回実行するだけで、関税率の集約結果が得られたい。複数ファイルを横断する手作業をなくしたいから。</td></tr>
+          <tr><td>US-02</td><td>輸入担当者として、中間Excelの「結果」シートの関税率列を見て、粗利表のAJ列の数式 <code>=PRODUCT(AA*, 9%)</code> の <code>9%</code> を該当の率に書き換えるだけで作業を完了させたい。</td></tr>
+          <tr><td>US-03</td><td>輸入担当者として、マッチできなかった品番について「なぜ・どこで失敗したか」を知りたい。手動補完の判断材料が欲しいから。</td></tr>
+          <tr><td>US-04</td><td>輸入担当者として、Set up（セット品）の場合も自動で TOPS+PANTS の HS を確認して関税率を返してほしい。手で2行を見比べたくないから。</td></tr>
+          <tr><td>US-05</td><td>輸入担当者として、案件ごとに PO の様式が変わっても、設定ファイルを少し直すだけでスクリプトを使い回したい。</td></tr>
+          <tr><td>US-06</td><td>輸入担当者として、許可証PDFが20欄を超える規模でも問題なく処理してほしい。</td></tr>
+          <tr><td>US-07</td><td>輸入担当者として、突合の経路（証跡）を後から追跡可能にしてほしい。誤った関税率が出たときに原因を遡れるように。</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="section-8">
+      <h2>8. 機能要件（FR）</h2>
+      <table>
+        <thead>
+          <tr><th>ID</th><th>要件</th><th>備考</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>FR-01</td><td>固定入力フォルダ内のファイルを種別（許可証/PL/PO）ごとに自動分類できる</td><td>ファイル名 + 内容パターンで判定</td></tr>
+          <tr><td>FR-02</td><td>輸入許可証PDF（テキスト選択可能）から欄ごとに 品目番号 と 関税率 のペアを全件抽出できる</td><td>1PDFに最大十数欄、<code>&lt; NN 欄&gt;</code> マーカーで区切る</td></tr>
+          <tr><td>FR-03</td><td>許可証の関税率を正規化できる（<code>S</code>/<code>G</code> プレフィックス除去、<code>FREE</code> → <code>0%</code>）</td><td>パーセンテージ表現は <code>X.X%</code> 形式に統一</td></tr>
+          <tr><td>FR-04</td><td>PL（Excel）から DESCRIPTION / HSコード を全件抽出できる</td><td>HSコードの区切り混在を吸収</td></tr>
+          <tr><td>FR-05</td><td>PO（Excel優先・なければPDF）から 品番 / Item / gender / Quality(素材) / Set upマーカー を全件抽出できる</td><td>列マッピングは設定ファイルで指定</td></tr>
+          <tr><td>FR-06</td><td>Google Sheets API（閲覧権限）で粗利表C列の品番一覧と行順を取得できる</td><td>データ範囲は3行目以降</td></tr>
+          <tr><td>FR-07</td><td>PO の Item語彙を PL の DESCRIPTION 語彙に対応付ける辞書（YAML外出し）を参照できる</td><td>bottoms→PANTS、long sleeves→TOPS等</td></tr>
+          <tr><td>FR-08</td><td>Item + gender + 素材 の部分一致 AND で PL の DESCRIPTION を検索できる</td><td>大文字小文字・空白の正規化を含む</td></tr>
+          <tr><td>FR-09</td><td>「Set up」マーカーがある場合、PL の TOPS と PANTS の2行を引き HS一致を確認できる</td><td>不一致時は未マッチ理由を記載</td></tr>
+          <tr><td>FR-10</td><td>HSコードを <strong>区切り文字除去・頭6桁に正規化</strong> して許可証品目番号と照合できる</td><td>正規化粒度は設定で変更可能（頭6桁 or 頭9桁）</td></tr>
+          <tr><td>FR-11</td><td>マッチ失敗時に「どのホップで・なぜ失敗したか」を記録できる</td><td>第6.5節の文言粒度</td></tr>
+          <tr><td>FR-12</td><td>粗利表の行順を保った「結果」シート、突合経路を残す「証跡」シート、処理サマリの3シート構成で中間Excelを生成できる</td><td>—</td></tr>
+          <tr><td>FR-13</td><td>処理サマリ（成功件数・未マッチ件数・対象品番数）をコンソールに表示できる</td><td>—</td></tr>
+          <tr><td>FR-14</td><td>同一入力に対する処理は冪等で、複数回実行しても同じ出力を生成する</td><td>—</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="section-9">
+      <h2>9. 非機能要件（NFR）</h2>
+      <table>
+        <thead>
+          <tr><th>ID</th><th>分類</th><th>要件</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>NFR-01</td><td>パフォーマンス</td><td>許可証PDF 1案件（16欄規模）+ PL 50行 + PO 数十行 + 粗利表 数百行 で、エンドツーエンド <strong>30分以内</strong> に完了</td></tr>
+          <tr><td>NFR-02</td><td>正確性</td><td>マッチ成功した品番について、関税率の値が許可証PDFの記載と <strong>100% 一致</strong></td></tr>
+          <tr><td>NFR-03</td><td>マッチ率</td><td>正常な入力データに対し、関税率の自動取得率 <strong>90% 以上</strong>（初回1〜2案件で実測後に再評価）</td></tr>
+          <tr><td>NFR-04</td><td>運用性</td><td>1コマンドで実行可能。設定はYAMLファイル化（Sheets ID・PO列マッピング・語彙辞書・HS正規化粒度等）</td></tr>
+          <tr><td>NFR-05</td><td>保守性</td><td>各抽出モジュール（PDF / Excel / Sheets）は分離。語彙辞書・列マッピングはコード変更不要で追加可能</td></tr>
+          <tr><td>NFR-06</td><td>セキュリティ</td><td>Google認証情報・PDF/Excel現物はリポジトリにコミットしない（<code>.gitignore</code> 必須）</td></tr>
+          <tr><td>NFR-07</td><td>可観測性</td><td>処理ログ（読み込んだファイル一覧、各ホップでのマッチ件数、未マッチ理由内訳）を残す</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="section-10">
+      <h2>10. 受け入れ条件</h2>
+      <ol>
+        <li>サンプル案件（許可証PDF 1件 + PL 1件 + PO 1件 + 粗利表）で実行し、中間Excel が3シート構成で生成される。</li>
+        <li>「結果」シートの関税率列を見て、<strong>粗利表のAJ列の数式の <code>9%</code> を該当の率に書き換える</strong>だけで更新が完了する。</li>
+        <li>マッチ成功した品番について、関税率の値が許可証PDFの記載と一致している。</li>
+        <li>マッチ失敗した品番について、未マッチ理由列に「どのホップで失敗したか」が記載されている。</li>
+        <li>Set up（セット品）の場合、TOPS+PANTS の HS が一致していれば自動で1つの関税率を返し、不一致なら未マッチ理由に明記される。</li>
+        <li>HSコードの桁数差・区切り文字差（PL 10桁 vs 許可証 4+2桁／4+2+3桁）が吸収されて正しく照合される。</li>
+        <li>関税率の <code>S</code>/<code>G</code> プレフィックス・<code>FREE</code> 表記が正しく正規化される。</li>
+        <li>1案件の所要時間が <strong>30分以下</strong> である（実測）。</li>
+        <li>同じ入力で2回実行しても、生成される中間Excelの内容が完全一致する。</li>
+      </ol>
+    </section>
+
+    <section id="section-11">
+      <h2>11. スコープ外（やらないこと）</h2>
+      <ul>
+        <li>粗利表（スプシ）への自動書き込み／自動数式更新（Phase 2）</li>
+        <li>輸入許可証PDFのOCR（スキャン画像PDFは対象外）</li>
+        <li>関税率以外の項目（仕入単価・数量・原産国等）の更新</li>
+        <li>PO・PL に対する高度なデータクレンジング・あいまいマッチ（部分一致 AND + 語彙辞書まで。それ以上は次イテレーション）</li>
+        <li>定期実行（cron 等によるスケジュール起動）</li>
+        <li>GUI（CLI 実行のみ）</li>
+      </ul>
+    </section>
+
+    <section id="section-12">
+      <h2>12. 制約・前提</h2>
+      <ul>
+        <li>実行環境は <strong>Python（ローカルPC）</strong> とする。</li>
+        <li>輸入許可証PDFは <strong>税関発行の決まった様式・テキスト選択可能</strong> である。</li>
+        <li>許可証の HSコード → 関税率は <strong>1:1</strong>（実サンプル16欄で確認済み）。</li>
+        <li>PL の DESCRIPTION → HSコードは <strong>原則 1:1</strong>（同一DESCRIPTIONで異なるHSが出る稀ケースは未マッチ理由に降格させる方針）。</li>
+        <li>粗利表は <strong>C列で品番を一意に識別</strong>・データ3行目以降・AJ列に <code>=PRODUCT(AA*, X%)</code> 形式の関税数式。</li>
+        <li>Google Sheets API（閲覧権限のみ）が利用可能な状態である。</li>
+        <li>PO の列構成は案件ごとに異なる可能性があるため、列マッピングは設定ファイル化する。</li>
+      </ul>
+    </section>
+
+    <section id="section-13">
+      <h2>13. 用語（Glossary 行き候補）</h2>
+      <table>
+        <thead>
+          <tr><th>用語</th><th>意味</th><th>例</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>品番</td><td>粗利表およびPOにおける一意な商品識別コード</td><td><code>ctstpjlblue</code>, <code>19silkpjslm1navy</code></td></tr>
+          <tr><td>Item</td><td>PO上の商品ライン名または品種</td><td><code>Cotton twill stripe pajama</code>, <code>long sleeves</code></td></tr>
+          <tr><td>Quality</td><td>素材・生地（生地幅・目付を含むこともある）</td><td><code>100% cotton</code>, <code>100% silk</code>, <code>100% cotton 57/58 110GSM</code></td></tr>
+          <tr><td>Set up</td><td>セット品マーカー。PL では TOPS+PANTS の2行に展開される</td><td>—</td></tr>
+          <tr><td>DESCRIPTION</td><td>PL上の商品説明文字列（gender + 素材 + 種類 を含む）</td><td><code>WOMEN'S COTTON TWILL STRIPE PAJAMA TOPS</code></td></tr>
+          <tr><td>HSコード</td><td>税関の関税分類コード。PLは10桁、許可証は税表番号(4+2桁)と品目番号(4+2+3桁)の2種</td><td>PL <code>6208210000</code> / 許可証 <code>6208.21-000</code></td></tr>
+          <tr><td>HS正規化キー</td><td>突合用のHSコード正規化形式（区切り除去・頭6桁）</td><td><code>620821</code></td></tr>
+          <tr><td>欄</td><td>許可証PDF内の品目申告ブロック。<code>&lt; NN 欄&gt;</code> マーカーで区切られる</td><td>1案件で最大十数欄</td></tr>
+          <tr><td>S / G プレフィックス</td><td>許可証の関税率に付く区分コード（推定: S=一般税率、G=協定税率）</td><td><code>S 4.5%</code>, <code>G 7.4%</code></td></tr>
+          <tr><td>FREE</td><td>許可証の関税率が免税のときの表記。正規化時は <code>0%</code></td><td>—</td></tr>
+          <tr><td>PL</td><td>Packing List（パッキングリスト）</td><td>—</td></tr>
+          <tr><td>PO</td><td>Purchase Order（発注書）</td><td>—</td></tr>
+          <tr><td>輸入許可証</td><td>税関発行の輸入許可通知書。HSコードと関税率が記載される</td><td>—</td></tr>
+          <tr><td>粗利表</td><td>商品ごとの粗利を管理する Google スプレッドシート</td><td>—</td></tr>
+        </tbody>
+      </table>
+      <p class="doc-meta">本リリース確定時に <code>docs/glossary.html</code> へ反映する。</p>
+    </section>
+
+    <section id="section-14">
+      <h2>14. リスク（実サンプル検証結果）</h2>
+
+      <h3>14.1 検証で解消されたリスク</h3>
+      <table>
+        <thead>
+          <tr><th>#</th><th>項目</th><th>検証結果</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>R-01</td><td>PO と PL の表記揺れ</td><td>表記揺れではなく <strong>表現粒度の違い</strong> と判明。語彙辞書 + 部分一致AND で対応可能。</td></tr>
+          <tr><td>R-02</td><td>許可証PDFの抽出方式</td><td>テーブル抽出 / 正規表現の両方で対応可能。<code>&lt; NN 欄&gt;</code> マーカーで欄を区切り、各キーを引く方針で確定。</td></tr>
+          <tr><td>R-03</td><td>粗利表のシート構造</td><td>C列=品番、AJ列=関税数式、データ3行目以降と判明。設定ファイルで吸収。</td></tr>
+          <tr><td>R-04</td><td>Google Sheets API 認証</td><td>サービスアカウント（閲覧権限）で十分。Phase 2 で編集権限に拡張。</td></tr>
+        </tbody>
+      </table>
+
+      <h3>14.2 新たに見つかったリスク</h3>
+      <table>
+        <thead>
+          <tr><th>#</th><th>項目</th><th>影響</th><th>対応方針</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>R-05</td>
+            <td>PO の列構成が案件ごとに違う</td>
+            <td>固定スキーマの抽出ロジックが通用しない</td>
+            <td>YAML設定で <strong>列マッピング</strong> を案件ごとに切替可能にする</td>
+          </tr>
+          <tr>
+            <td>R-06</td>
+            <td>Set up（セット品）で PL の TOPS と PANTS で HS が一致しないケース</td>
+            <td>1つの関税率に収束できない</td>
+            <td>未マッチ理由に明記して人に判断を仰ぐ</td>
+          </tr>
+          <tr>
+            <td>R-07</td>
+            <td>HS正規化の粒度（頭6桁 vs 頭9桁）</td>
+            <td>マッチ率と精度のトレードオフ</td>
+            <td>既定 頭6桁、設定で切替可能。実測で再評価</td>
+          </tr>
+          <tr>
+            <td>R-08</td>
+            <td>PL の DESCRIPTION に素材が明記されないサイレントケース</td>
+            <td>部分一致での絞り込み不足</td>
+            <td>複数候補ヒット時は未マッチ扱いとして人に提示</td>
+          </tr>
+          <tr>
+            <td>R-09</td>
+            <td>関税率の <code>S</code>/<code>G</code> プレフィックスの意味確認</td>
+            <td>抽出時の解釈に影響</td>
+            <td>現状は記号を除去して数値%のみ採用。意味は業務確認後に証跡に注記</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="section-15">
+      <h2>15. Phase 2（将来検討）</h2>
+      <p>本リリースのスコープ外。実装着手はしないが、設計上の余地は残す。</p>
+      <ul>
+        <li><strong>粗利表 AJ列への自動書き込み</strong>: 中間Excelで確定した関税率を、<code>=PRODUCT(AA*, X%)</code> 形式の数式として Sheets API で直接書き込む。認証スコープを「閲覧」から「編集」へ昇格。</li>
+        <li><strong>あいまいマッチ</strong>: Item語彙辞書だけで吸収しきれない表記揺れに対し、レーベンシュタイン距離等のあいまいマッチを導入。</li>
+        <li><strong>HS分類の自動学習</strong>: 過去案件のHS割当を蓄積し、新規品番に対するHS候補を提示。</li>
+        <li><strong>定期実行・GUI化</strong>: 案件フォルダ監視で自動起動。Web UI で結果を閲覧。</li>
+      </ul>
+    </section>
+
+  </main>
+
+  <footer class="doc-footer">
+    <a class="back-link" href="../../docs/index.html">← ドキュメントトップへ戻る</a>
+  </footer>
+
+</body>
+</html>

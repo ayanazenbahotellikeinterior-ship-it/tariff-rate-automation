@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>技術仕様書 — 関税率自動化ツール</title>
+  <link rel="stylesheet" href="assets/design-system.css">
+</head>
+<body>
+
+  <header class="doc-header">
+    <a class="back-link" href="index.html">← 戻る</a>
+    <h1>技術仕様書</h1>
+    <p class="doc-meta">ドキュメントID: ARCH-001 / 最終更新: 2026-05-13 / バージョン: 0.1（ドラフト）</p>
+  </header>
+
+  <details class="toc" open>
+    <summary>目次</summary>
+    <nav aria-label="目次">
+      <ol>
+        <li><a href="#section-1">1. 技術スタック</a></li>
+        <li><a href="#section-2">2. システム構成（高位）</a></li>
+        <li><a href="#section-3">3. 開発ツール</a></li>
+        <li><a href="#section-4">4. ホスティング候補比較</a></li>
+        <li><a href="#section-5">5. 技術的制約</a></li>
+        <li><a href="#section-6">6. パフォーマンス要件</a></li>
+        <li><a href="#section-7">7. セキュリティ・コンプライアンス</a></li>
+        <li><a href="#section-8">8. スケーラビリティ方針</a></li>
+        <li><a href="#section-9">9. 監視・ログ</a></li>
+        <li><a href="#section-10">10. CI/CD（参考）</a></li>
+      </ol>
+    </nav>
+  </details>
+
+  <main>
+
+    <section id="section-1">
+      <h2>1. 技術スタック</h2>
+
+      <h3>1.1 ランタイム</h3>
+      <ul>
+        <li>言語: <strong>Python 3.11+</strong></li>
+        <li>OS: Windows 11（開発）/ Linux（コンテナ・本番）</li>
+      </ul>
+
+      <h3>1.2 バックエンド</h3>
+      <table>
+        <thead>
+          <tr><th>カテゴリ</th><th>採用</th><th>用途</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Web フレームワーク</td><td><strong>FastAPI</strong></td><td>非同期API・型ヒント・Swagger自動生成</td></tr>
+          <tr><td>ASGI サーバ</td><td><strong>uvicorn</strong></td><td>FastAPI のランナー</td></tr>
+          <tr><td>テンプレート</td><td><strong>Jinja2</strong></td><td>サーバサイドHTMLレンダリング</td></tr>
+          <tr><td>認証</td><td><strong>Authlib</strong></td><td>Google OAuth 2.0</td></tr>
+          <tr><td>セッション</td><td><strong>itsdangerous</strong></td><td>署名付き暗号化Cookie</td></tr>
+          <tr><td>PDF抽出</td><td><strong>pdfplumber</strong></td><td>許可証/PO の構造化抽出</td></tr>
+          <tr><td>Excel処理</td><td><strong>openpyxl + xlrd</strong></td><td>.xlsx + 旧 .xls 対応</td></tr>
+          <tr><td>データ処理</td><td><strong>pandas</strong></td><td>DataFrame による中間表現</td></tr>
+          <tr><td>Google Sheets</td><td><strong>google-api-python-client + google-auth</strong></td><td>サービスアカウント認証</td></tr>
+          <tr><td>設定読込</td><td><strong>PyYAML</strong></td><td>config.yaml / vocabulary.yaml</td></tr>
+        </tbody>
+      </table>
+
+      <h3>1.3 フロントエンド</h3>
+      <ul>
+        <li><strong>HTML5 + CSS3 + Vanilla JavaScript（ES2020+）</strong></li>
+        <li>SPA フレームワーク（React/Vue 等）は <strong>採用しない</strong>。理由: 画面数6・状態管理が単純・ビルド不要 を優先。</li>
+        <li>CDN・外部ライブラリへの依存は <strong>持たない</strong>（オフライン動作可能性のため）。</li>
+      </ul>
+
+      <h3>1.4 インフラ</h3>
+      <ul>
+        <li>コンテナ: <strong>Docker</strong>（Dockerfile + docker-compose.yml）</li>
+        <li>HTTPS: ホスティング先のマネージドHTTPS（Cloud Run / Render 等）or Caddy/Nginx + Let's Encrypt</li>
+        <li>永続化: ファイルシステム（初期）→ SQLite/PostgreSQL（規模拡大時）</li>
+        <li>キャッシュ・キュー: なし（FastAPI BackgroundTasks）→ 規模拡大時に Redis + Celery</li>
+      </ul>
+    </section>
+
+    <section id="section-2">
+      <h2>2. システム構成（高位）</h2>
+      <p>詳細は <a href="../.steering/20260513-add-web-frontend/design.html#section-2">.steering/.../design.html 2節</a> を参照。要点：</p>
+      <ul>
+        <li><strong>3層構成</strong>: ブラウザ（HTML/CSS/JS）→ FastAPI（Web層）→ 既存CLIモジュール（業務ロジック層）</li>
+        <li><strong>業務ロジック層は変更しない</strong>（CLI と Web で共通）</li>
+        <li><strong>状態管理</strong>: 初期はファイルシステム + メモリ（ジョブはJSON永続化、セッションはCookie）</li>
+      </ul>
+    </section>
+
+    <section id="section-3">
+      <h2>3. 開発ツール</h2>
+      <table>
+        <thead>
+          <tr><th>用途</th><th>ツール</th><th>備考</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>仮想環境</td><td><code>venv</code></td><td>標準ライブラリ</td></tr>
+          <tr><td>依存管理</td><td><code>pip + requirements.txt</code></td><td>バージョン固定</td></tr>
+          <tr><td>フォーマット</td><td><strong>black</strong>（line-length 100）</td><td>—</td></tr>
+          <tr><td>インポート整理</td><td><strong>isort</strong>（profile black）</td><td>—</td></tr>
+          <tr><td>静的解析</td><td><strong>ruff</strong></td><td>E/F/W/I/B/UP ルール</td></tr>
+          <tr><td>型チェック</td><td><strong>mypy</strong>（任意・公開API中心）</td><td>—</td></tr>
+          <tr><td>テスト</td><td><strong>pytest + pytest-asyncio</strong></td><td>カバレッジは任意</td></tr>
+          <tr><td>API テスト</td><td><code>fastapi.testclient</code></td><td>—</td></tr>
+          <tr><td>コンテナビルド</td><td><code>docker build</code></td><td>—</td></tr>
+          <tr><td>エディタ</td><td>VS Code（推奨）</td><td>Python / Pylance / Live Preview 拡張</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="section-4">
+      <h2>4. ホスティング候補比較</h2>
+      <p>本作業のホスティング先は未確定。Docker 完結で設計し、以下の選択肢から決定する。</p>
+
+      <table>
+        <thead>
+          <tr>
+            <th>候補</th>
+            <th>初期コスト</th>
+            <th>月額目安</th>
+            <th>HTTPS</th>
+            <th>デプロイ難易度</th>
+            <th>外部公開</th>
+            <th>メリット / 留意点</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>社内サーバ / 社内PC</strong></td>
+            <td>0円</td>
+            <td>0円</td>
+            <td>手動（Caddy/Let's Encrypt）</td>
+            <td>中</td>
+            <td>VPN経由</td>
+            <td>★コストゼロ / ★情報漏洩リスク最小（社内LANのみ）<br>留意: 24h稼働の運用負荷・VPN必須</td>
+          </tr>
+          <tr>
+            <td><strong>Google Cloud Run</strong></td>
+            <td>0円</td>
+            <td>無料枠後 〜数千円</td>
+            <td>自動</td>
+            <td>低</td>
+            <td>可能</td>
+            <td>★Docker そのままデプロイ可 / ★Google エコシステム親和性<br>留意: コールドスタート数秒</td>
+          </tr>
+          <tr>
+            <td><strong>Render</strong></td>
+            <td>0円</td>
+            <td>無料枠 or $7〜</td>
+            <td>自動</td>
+            <td>低</td>
+            <td>可能</td>
+            <td>★Git push で自動デプロイ / ★無料枠あり<br>留意: 無料枠はスリープあり</td>
+          </tr>
+          <tr>
+            <td><strong>AWS App Runner</strong></td>
+            <td>0円</td>
+            <td>$25〜</td>
+            <td>自動</td>
+            <td>中</td>
+            <td>可能</td>
+            <td>AWS 連携が必要なら採用<br>留意: 月額やや高め</td>
+          </tr>
+          <tr>
+            <td><strong>Railway</strong></td>
+            <td>0円</td>
+            <td>$5〜</td>
+            <td>自動</td>
+            <td>低</td>
+            <td>可能</td>
+            <td>シンプルな PaaS。Render と類似</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>4.1 推奨</h3>
+      <ul>
+        <li><strong>初期（PoC〜5名利用）</strong>: <strong>Google Cloud Run</strong>（無料枠が大きい・Sheets API と相性良・コールドスタートも許容範囲）</li>
+        <li><strong>機密性最優先</strong>: <strong>社内サーバ</strong>（クラウドにファイルを置きたくない場合）</li>
+        <li><strong>開発フェーズ</strong>: <strong>ローカル Docker</strong>（<code>docker compose up</code>）</li>
+      </ul>
+
+      <h3>4.2 選定時のチェックリスト</h3>
+      <ul>
+        <li>機密ファイル（取引先・金額入り）をクラウドに置いて良いか</li>
+        <li>月額コストの上限</li>
+        <li>HTTPS設定・ドメイン管理の手間</li>
+        <li>初回デプロイの所要時間</li>
+        <li>本番URL を社外公開するか（VPN内のみか）</li>
+        <li>運用負荷（24h稼働・ログ確認頻度）</li>
+      </ul>
+    </section>
+
+    <section id="section-5">
+      <h2>5. 技術的制約</h2>
+      <ul>
+        <li><strong>Python のみ</strong>: 他言語の混在は避ける（保守者の学習コスト最小化）。</li>
+        <li><strong>外部 SaaS は最小限</strong>: Google OAuth と Google Sheets API のみ。他の SaaS（DB as a Service 等）は使わない。</li>
+        <li><strong>ビルドステップを増やさない</strong>: フロントは Webpack/Vite 等を使わない。バンドラ不要のシンプル構成。</li>
+        <li><strong>機密情報はリポジトリに含めない</strong>: <code>.env</code> / <code>secrets/</code> / 実 PDF/Excel は全て <code>.gitignore</code>。</li>
+        <li><strong>CDN 依存を避ける</strong>: ドキュメント・UI ともに自己完結する HTML/CSS/JS のみ。</li>
+        <li><strong>1人運用前提</strong>: 複雑な権限管理・運用自動化は持たない（必要になったら段階的に追加）。</li>
+      </ul>
+    </section>
+
+    <section id="section-6">
+      <h2>6. パフォーマンス要件</h2>
+      <table>
+        <thead>
+          <tr><th>項目</th><th>目標</th><th>計測方法</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>1案件の処理時間（許可証16欄 + PL 50行 + PO 数十行）</td><td>5分以内</td><td>実測（ログのタイムスタンプ）</td></tr>
+          <tr><td>アップロード〜結果表示までの体感時間</td><td>5分以内（処理中表示あり）</td><td>—</td></tr>
+          <tr><td>同時実行ジョブ数</td><td>最大5並列</td><td>負荷テスト</td></tr>
+          <tr><td>API レスポンス（軽量エンドポイント）</td><td>200ms以内</td><td>—</td></tr>
+          <tr><td>ファイルアップロード（10MB×3）</td><td>30秒以内</td><td>—</td></tr>
+          <tr><td>ページ表示（FCP）</td><td>1秒以内（社内LAN）</td><td>—</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="section-7">
+      <h2>7. セキュリティ・コンプライアンス</h2>
+
+      <h3>7.1 認証</h3>
+      <ul>
+        <li><strong>Google OAuth 2.0</strong>（Authorization Code Flow）</li>
+        <li>許可ドメインリスト で社外を拒否</li>
+        <li>セッションは HttpOnly + Secure + SameSite=Lax の暗号化Cookie</li>
+        <li>セッションTTL: 8時間</li>
+      </ul>
+
+      <h3>7.2 通信</h3>
+      <ul>
+        <li>本番は <strong>HTTPS 必須</strong>（クラウドはマネージド・社内は Caddy + Let's Encrypt）</li>
+        <li>OAuth コールバックURLも HTTPS</li>
+      </ul>
+
+      <h3>7.3 機密ファイル管理</h3>
+      <ul>
+        <li>アップロードファイル・結果Excelは <strong>30日で自動削除</strong></li>
+        <li>ユーザー間の隔離: ジョブIDで分離、API はリクエストユーザーが所有者か検証</li>
+        <li>at-rest 暗号化: ホスティング先の機能に依存（Cloud Storage は標準で暗号化）</li>
+      </ul>
+
+      <h3>7.4 シークレット管理</h3>
+      <ul>
+        <li>環境変数経由のみ（リポジトリに含めない）</li>
+        <li>本番: Cloud Secret Manager / Render Env / Docker secrets</li>
+        <li>開発: <code>.env</code>（<code>.gitignore</code> 必須）</li>
+      </ul>
+
+      <h3>7.5 入力検証</h3>
+      <ul>
+        <li>ファイル形式（拡張子 + MIMEタイプ）</li>
+        <li>ファイルサイズ（10MB上限）</li>
+        <li>HTML エスケープ（Jinja2 自動）</li>
+        <li>SQL インジェクション: 該当なし（DB未使用）</li>
+      </ul>
+
+      <h3>7.6 ログ・監査</h3>
+      <ul>
+        <li>機密情報（取引先名・金額）はログに出さない</li>
+        <li>認証イベント（ログイン/失敗）・ジョブ操作はサーバログに記録</li>
+      </ul>
+    </section>
+
+    <section id="section-8">
+      <h2>8. スケーラビリティ方針</h2>
+
+      <h3>8.1 初期リリース（〜5名・週数回）</h3>
+      <ul>
+        <li>シングルプロセス FastAPI + BackgroundTasks（最大5並列）</li>
+        <li>ファイルシステム永続化（JSON）</li>
+        <li>セッションはメモリ + 暗号化Cookie</li>
+      </ul>
+
+      <h3>8.2 中規模化（〜30名・日数十件）</h3>
+      <ul>
+        <li>DB 導入（SQLite or PostgreSQL）でジョブ・履歴を永続化</li>
+        <li>セッション保存先を Redis に</li>
+        <li>uvicorn ワーカー複数化</li>
+      </ul>
+
+      <h3>8.3 大規模化（数百名規模）</h3>
+      <ul>
+        <li>ジョブキューを Celery + Redis に切替</li>
+        <li>ロードバランサ + 複数インスタンス</li>
+        <li>ストレージを Cloud Storage / S3 に移行</li>
+      </ul>
+
+      <h3>8.4 設計上の備え</h3>
+      <ul>
+        <li><code>job_store</code> / <code>file_store</code> はインターフェース抽象化されており、実装を差し替え可能</li>
+        <li>job_runner も非同期インターフェース統一で、後から Celery 等への置き換えが容易</li>
+      </ul>
+    </section>
+
+    <section id="section-9">
+      <h2>9. 監視・ログ</h2>
+
+      <h3>9.1 ログ</h3>
+      <ul>
+        <li>標準ライブラリ <code>logging</code> を使用</li>
+        <li>レベル: DEBUG/INFO/WARNING/ERROR（<a href="development-guidelines.html#section-6">development-guidelines.html 6節</a>）</li>
+        <li>ファイル出力: <code>/data/logs/run_YYYYMMDD_HHmm.log</code></li>
+        <li>本番ではホスティング先のログ集約（Cloud Logging / Render Logs）も併用</li>
+      </ul>
+
+      <h3>9.2 ヘルスチェック</h3>
+      <ul>
+        <li><code>GET /healthz</code>: 200 OK を返すだけ（コンテナの liveness/readiness 用）</li>
+      </ul>
+
+      <h3>9.3 メトリクス（任意）</h3>
+      <ul>
+        <li>初期は不要</li>
+        <li>規模拡大時に Prometheus エクスポート + Grafana を検討</li>
+      </ul>
+
+      <h3>9.4 アラート</h3>
+      <ul>
+        <li>初期は不要（個人運用）</li>
+        <li>チーム規模が大きくなったら、ホスティング先のアラート機能を使う</li>
+      </ul>
+    </section>
+
+    <section id="section-10">
+      <h2>10. CI/CD（参考）</h2>
+      <p>本リリースは個人運用のため CI/CD は必須ではない。将来導入時の参考として記載。</p>
+
+      <h3>10.1 ローカル開発フロー</h3>
+      <ol>
+        <li><code>git pull</code></li>
+        <li><code>pip install -r requirements.txt</code></li>
+        <li><code>pytest</code> でユニットテスト</li>
+        <li><code>black . && ruff check .</code> でフォーマット・静的解析</li>
+        <li><code>docker compose up</code> でローカル動作確認</li>
+        <li><code>git commit && git push</code></li>
+      </ol>
+
+      <h3>10.2 デプロイフロー（候補）</h3>
+      <ul>
+        <li><strong>Cloud Run</strong>: <code>gcloud run deploy</code>（手動）or Cloud Build によるGit連携</li>
+        <li><strong>Render</strong>: Git push で自動デプロイ（Connect GitHub）</li>
+        <li><strong>社内サーバ</strong>: <code>git pull && docker compose pull && docker compose up -d</code> を手動 or rsync スクリプト</li>
+      </ul>
+
+      <h3>10.3 GitHub Actions（任意）</h3>
+      <pre><code># 例: .github/workflows/test.yml
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: pip install -r requirements.txt
+      - run: pytest
+      - run: ruff check .</code></pre>
+    </section>
+
+  </main>
+
+  <footer class="doc-footer">
+    <a class="back-link" href="index.html">← 戻る</a>
+  </footer>
+
+</body>
+</html>
